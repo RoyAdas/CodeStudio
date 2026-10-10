@@ -229,6 +229,14 @@ try {
   check('Stop.cmd shuts down only its own extracted instance and preserves the unrelated port blocker');
 } catch (error) {
   primaryError = error;
+  // Only this clean fixture's generated startup log is read; credentials remain
+  // empty, and keeping its error makes CI startup failures actionable.
+  if (started) {
+    try {
+      const startupError = (await fs.readFile(path.join(appRoot, 'data/server-error.log'), 'utf8')).trim();
+      if (startupError) primaryError = new Error(`${error.message}\nPackage startup log: ${startupError.slice(-8000)}`, { cause: error });
+    } catch { /* Startup may fail before creating a log. */ }
+  }
 } finally {
   const cleanupErrors = [];
   if (started && !stopped) {

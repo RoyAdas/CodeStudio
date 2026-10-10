@@ -1,0 +1,50 @@
+name: Publish verified Windows release
+on:
+  push:
+    branches: ['release/v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.repository == 'RoyAdas/CodeStudio' && startsWith(github.ref, 'refs/heads/release/v')
+    runs-on: windows-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.21.0
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+      - run: npx playwright install chromium
+      - run: npm run test:e2e
+      - run: npm run package:win
+      - run: npm run test:package
+      - name: Preserve verified package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verified-Windows-release
+          path: |
+            releases/CodeStudio-v*-windows-x64.zip
+            releases/SHA256SUMS.txt
+          if-no-files-found: error
+      - name: Publish verified assets and version tag
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/publish-release.mjs
+      - name: Preserve failure details
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-test-results
+          path: test-results/
+          if-no-files-found: ignore

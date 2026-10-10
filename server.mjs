@@ -222,6 +222,7 @@ async function spawnRun(run, executable, args, cwd, phase) {
 }
 async function execute(run, file, relative, language, args) {
   let code = -1;
+  const temporaryFiles = [];
   try {
     const available = await detectTools();
     const tool = available[language];
@@ -229,14 +230,27 @@ async function execute(run, file, relative, language, args) {
     run.extraPath = path.dirname(tool.path);
     const cwd = path.dirname(file);
     if (language === 'c' || language === 'cpp') {
-      const build = path.join(DATA, 'build'); await fs.mkdir(build, { recursive: true });
-      const target = path.join(build, `${run.id}.exe`);
+      // Some Windows MinGW linkers cannot open Unicode absolute output paths.
+      // Keep compiler arguments ASCII and preserve local quoted includes by
+      // compiling an exclusive temporary copy beside the original source.
+      const sourceName = `.studio-build-${run.id}.${language === 'c' ? 'c' : 'cpp'}`;
+      const source = path.join(cwd, sourceName);
+      const targetName = `.studio-build-${run.id}.exe`;
+      const target = path.join(cwd, targetName);
+      const sourceHandle = await fs.open(source, 'wx'); temporaryFiles.push(source);
+      try {
+        const original = await fs.readFile(file);
+        const content = original.subarray(original[0] === 0xef && original[1] === 0xbb && original[2] === 0xbf ? 3 : 0);
+        // Retain original diagnostic lines and __FILE__, including Unicode names.
+        await sourceHandle.writeFile(Buffer.concat([Buffer.from(`#line 1 ${JSON.stringify(file)}\n`, 'utf8'), content]));
+      } finally { await sourceHandle.close(); }
+      const targetHandle = await fs.open(target, 'wx'); temporaryFiles.push(target);
+      await targetHandle.close();
       emit('output', { text: `编译 ${relative} …\n`, channel: 'system' });
-      const compilation = await spawnRun(run, tool.path, [file, '-o', target, language === 'c' ? '-std=c11' : '-std=c++17', '-Wall', '-Wextra', '-g', '-fdiagnostics-color=never'], cwd, 'compile');
-      emit('diagnostics', { path: relative, markers: diagnostics(compilation.captured, relative) });
+      const compilation = await spawnRun(run, tool.path, [sourceName, '-o', targetName, language === 'c' ? '-std=c11' : '-std=c++17', '-Wall', '-Wextra', '-g', '-fdiagnostics-color=never'], cwd, 'compile');
+      emit('diagnostics', { path: relative, markers: diagnostics(compilation.captured.split(sourceName).join(file), relative) });
       if (compilation.code !== 0 || run.stopping) code = compilation.code;
       else { emit('output', { text: '编译成功，开始运行。\n', channel: 'system' }); code = (await spawnRun(run, target, args, cwd, 'run')).code; }
-      try { await fs.unlink(target); } catch {}
     } else {
       emit('output', { text: `运行 ${relative} …\n`, channel: 'system' });
       const result = await spawnRun(run, tool.path, language === 'python' ? ['-u', file, ...args] : [file, ...args], cwd, 'run');
@@ -244,6 +258,11 @@ async function execute(run, file, relative, language, args) {
     }
   } catch (e) { emit('output', { text: `${cleanError(e)}\n`, channel: 'stderr' }); }
   finally {
+    // Paths enter this list only after wx creation succeeds; never delete a
+    // pre-existing file when a collision or a partial setup failure occurs.
+    for (const temporary of temporaryFiles) {
+      try { await fs.unlink(temporary); } catch (e) { if (e.code !== 'ENOENT') emit('output', { text: '临时编译文件清理失败，请关闭占用文件的程序后重试。\n', channel: 'system' }); }
+    }
     run.child = null; run.code = code; run.phase = 'finished';
     emit('finish', { id: run.id, code, stopped: run.stopping, duration: Date.now() - run.started });
   }

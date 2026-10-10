@@ -7,6 +7,7 @@ First public release / 首个公开版本。
 - Windows x64 local browser workbench with a bundled Node runtime and start/stop launchers.
 - Monaco editing, project file management, browser drafts, and Python/C/C++ basic completion.
 - Single-file Python, C11, C++17, and JavaScript execution with standard input, cancellation, and time limits.
+- C/C++ compilation uses temporary ASCII filenames to support Unicode installation paths and source filenames with Windows MinGW, preserving source files, diagnostics and local includes.
 - Configurable Chat Completions, Responses, and Anthropic Messages endpoints; local Windows-account encryption for API keys.
 - Task-based AI mentoring with step plans, hints, idle/run reviews, explicit step advancement, and persistent workspace progress.
 - Automatic-review pause, interval and hourly limits, request/token usage reporting, and sensitive-filename exclusions for mentor context.

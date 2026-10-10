@@ -128,3 +128,52 @@ test('in-flight API requests keep their original endpoint, model and Windows cre
   assert.equal(records[0][0].input.model, 'model-before');
   assert.equal(records[0][0].authorization, 'Bearer studio-test-only-fake-key');
 });
+
+test('C and C++ compile Unicode paths and names without modifying sources or losing local includes', { skip: process.platform !== 'win32' && 'Windows compiler path compatibility is required.' }, async t => {
+  const directory = '中文 空格';
+  const cFile = `${directory}/计算 示例.c`;
+  const cppFile = `${directory}/计算 示例.cpp`;
+  const files = {
+    [`${directory}/values.h`]: '#define STUDIO_VALUE 42\n',
+    [cFile]: '\uFEFF#include <stdio.h>\n#include "values.h"\nint main(void) { printf("Header: %d\\n", STUDIO_VALUE); puts(__FILE__); return 0; }\n',
+    [cppFile]: '#include <iostream>\n#include "values.h"\nint main() { std::cout << "Header: " << STUDIO_VALUE << "\\n" << __FILE__ << "\\n"; }\n',
+  };
+  const fixture = await createFixture({ files });
+  t.after(() => fixture.cleanup());
+  await fixture.start();
+  const state = (await fixture.call('state')).value;
+  let checked = 0;
+  for (const [tool, file] of [['c', cFile], ['cpp', cppFile]]) {
+    if (!state.tools[tool]?.available) { t.diagnostic(`SKIP ${tool}: no usable compiler on this machine.`); continue; }
+    const before = await fs.readFile(path.join(fixture.root, 'workspace', file));
+    const started = await fixture.call('run', { path: file });
+    assert.equal(started.status, 200);
+    let run;
+    await eventually(async () => { run = (await fixture.call('state')).value.run; return run?.id === started.value.id && run.phase === 'finished'; }, 40000);
+    assert.equal(run.code, 0, `${tool} Unicode source failed: ${run.output}`);
+    assert.match(run.output, /Header: 42/);
+    assert.ok(run.output.includes(await fs.realpath(path.join(fixture.root, 'workspace', file))), `__FILE__ must retain the original source path: ${run.output}`);
+    assert.deepEqual(await fs.readFile(path.join(fixture.root, 'workspace', file)), before);
+    assert.equal((await fs.readdir(path.join(fixture.root, 'workspace', directory))).some(name => name.startsWith('.studio-build-')), false, 'Owned source and executable copies must be removed.');
+    checked++;
+  }
+  if (!checked) t.skip('No supported C/C++ compiler is installed.');
+});
+
+test('failed C compilation cleans owned copies and reports the original Unicode file and line', { skip: process.platform !== 'win32' && 'Windows compiler path compatibility is required.' }, async t => {
+  const file = '中文 空格/错误 示例.c';
+  const source = 'int main(void) {\n    return missing_name;\n}\n';
+  const fixture = await createFixture({ files: { [file]: source } });
+  t.after(() => fixture.cleanup());
+  await fixture.start();
+  if (!(await fixture.call('state')).value.tools.c?.available) { t.skip('No supported C compiler is installed.'); return; }
+  const started = await fixture.call('run', { path: file });
+  let run;
+  await eventually(async () => { run = (await fixture.call('state')).value.run; return run?.id === started.value.id && run.phase === 'finished'; }, 40000);
+  assert.notEqual(run.code, 0);
+  assert.ok(run.output.includes(path.basename(file)), 'Diagnostics must reference the original filename.');
+  assert.match(run.output, /:2:\d+:\s*error/);
+  assert.equal(run.output.includes('.studio-build-'), false);
+  assert.equal(await fs.readFile(path.join(fixture.root, 'workspace', file), 'utf8'), source);
+  assert.deepEqual(await fs.readdir(path.join(fixture.root, 'workspace', path.dirname(file))), [path.basename(file)]);
+});

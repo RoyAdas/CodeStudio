@@ -1,0 +1,27 @@
+name: Feature request / 功能建议
+description: Describe a workflow that CodeStudio could improve / 描述你希望改善的使用场景
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do? / 你想完成什么？
+      description: Describe the task and the current obstacle / 说明使用场景及遇到的困难
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested behavior / 期望的功能或行为
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or examples / 替代方法或参考示例
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context / 其他说明
+      description: Avoid including secrets, private code, or account details / 请勿包含密钥、私人代码或账号信息

@@ -20,6 +20,7 @@ jobs:
         run: npm ci
       - name: Prepare bundled language services
         run: npm run prepare:languages
+      - run: npm run prepare:debugger
       - name: Check types
         run: npm run typecheck
       - name: Build editor

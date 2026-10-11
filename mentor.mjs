@@ -20,7 +20,7 @@ function recordUsage(session, usage) {
   }
 }
 
-export function createMentorController({ dataDir, getWorkspace, askAI, broadcast }) {
+export function createMentorController({ dataDir, getWorkspace, askAI, broadcast, getLocale = () => 'zh-CN' }) {
   const storage = path.join(dataDir, 'mentor-sessions.json');
   const sessions = new Map(); const jobs = new Map(); let initialized = false; let writeQueue = Promise.resolve();
   const keyFor = root => crypto.createHash('sha256').update(root.toLowerCase()).digest('hex');
@@ -116,13 +116,16 @@ export function createMentorController({ dataDir, getWorkspace, askAI, broadcast
       session.metrics ||= { requests: 0, reportedTokens: 0, usageResponses: 0 }; session.metrics.requests++;
       if (automatic) session.automaticRequests.push(Date.now()); await save();
       if (!stillCurrent(key, job)) return { session: sessions.get(key) || null, canceled: true };
-      const result = await askAI({ system: `${role}\n只检查当前步骤，不重新规划，也不提前教后续步骤。JSON 格式：{"status":"in_progress|needs_fix|passed","note":"简短判断及依据","hint":"接下来给学习者的一条提示，不直接给完整代码","evidence":[{"path":"传入的文件路径","line":1,"message":"具体观察"}]}。passed 必须满足本步骤 acceptance；没有运行证据时明确标注只做静态检查。已存在代码中的 TODO 或不足应给具体提示。evidence 只引用快照中的文件与有效行号，最多 3 条。用户提问时回答问题，但不要虚报完成。\n${hintInstruction}`, messages: [{ role: 'user', content: `总任务：${session.task}\n学习基础：${session.level}\n当前步骤 ${step + 1}/${session.steps.length}：${JSON.stringify(session.steps[step])}\n此前反馈：${JSON.stringify(session.review || null)}\n检查触发：${trigger}\n学习者问题：${text(input.question, 3000) || '请判断这一步的进度，并提示下一件小事。'}\n当前快照：${JSON.stringify(context)}` }], signal: job.controller.signal, maxTokens: 1800 });
+      const result = await askAI({ system: `${role}\n只检查当前步骤，不重新规划，也不提前教后续步骤。tests 是本机真实 unittest 结果；仅 matchesCurrentCode=true 且 passed=true 时可引用为测试通过。跳过、空结果、停止、失败或过期不算通过。debug 是用户主动提供的暂停状态，可用于解释变量，不能当作任务完成证据。JSON 格式：{"status":"in_progress|needs_fix|passed","note":"简短判断及依据","hint":"接下来给学习者的一条提示，不直接给完整代码","evidence":[{"path":"传入的文件路径","line":1,"message":"具体观察"}]}。passed 必须满足本步骤 acceptance；没有运行证据时明确标注只做静态检查。已存在代码中的 TODO 或不足应给具体提示。evidence 只引用快照中的文件与有效行号，最多 3 条。用户提问时回答问题，但不要虚报完成。\n${hintInstruction}`, messages: [{ role: 'user', content: `总任务：${session.task}\n学习基础：${session.level}\n当前步骤 ${step + 1}/${session.steps.length}：${JSON.stringify(session.steps[step])}\n此前反馈：${JSON.stringify(session.review || null)}\n检查触发：${trigger}\n学习者问题：${text(input.question, 3000) || '请判断这一步的进度，并提示下一件小事。'}\n当前快照：${JSON.stringify(context)}` }], signal: job.controller.signal, maxTokens: 1800 });
       if (!stillCurrent(key, job) || session.revision !== revision) return { session, canceled: true };
       recordUsage(session, result.usage);
       const review = extractJSON(result.text);
+      if (review.status === 'passed' && context.tests && (!context.tests.passed || !context.tests.matchesCurrentCode)) {
+        review.status = 'needs_fix'; review.note = getLocale() === 'en' ? (context.tests.matchesCurrentCode ? 'Tests have not all passed. Resolve failures, errors or an empty test run first.' : 'Code changed and test results are stale. Run tests again before review.') : context.tests.matchesCurrentCode ? '当前测试尚未全部通过，请先处理失败、错误或空测试结果。' : '代码已变化，测试结果已过期，请重新运行测试后验收。';
+      }
       if (!['in_progress', 'needs_fix', 'passed'].includes(review.status) || !text(review.note)) problem('导师返回的检查结果格式不完整，请手动重试。', 502);
       const evidence = (Array.isArray(review.evidence) ? review.evidence : []).slice(0, 3).filter(item => context.files.some(file => file.path === item.path && Number.isInteger(item.line) && item.line > 0 && item.line <= file.code.split('\n').length)).map(item => ({ path: item.path, line: item.line, message: text(item.message, 1000) })).filter(item => item.message);
-      session.review = { status: review.status, note: text(review.note, 2500), hint: text(review.hint, 6000), hintLevel, evidence, trigger, step, time: Date.now(), contextFingerprint: fingerprint, runEvidence: !!context.run?.matchesCurrentCode && context.run?.phase === 'finished', question: text(input.question, 3000) };
+      session.review = { status: review.status, note: text(review.note, 2500), hint: text(review.hint, 6000), hintLevel, evidence, trigger, step, time: Date.now(), contextFingerprint: fingerprint, testEvidence: !!context.tests?.matchesCurrentCode && context.tests?.phase === 'finished', runEvidence: !!context.run?.matchesCurrentCode && context.run?.phase === 'finished', question: text(input.question, 3000) };
       if (automatic) session.autoChecks++; session.lastError = ''; session.updatedAt = Date.now();
       history(session, 'check', session.review.note, trigger); await save(); publish(root, session); return { session };
     } catch (error) {

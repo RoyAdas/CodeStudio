@@ -11,6 +11,9 @@ import { PROJECT_FILE, normalizeProject, readProject } from './project.mjs';
 import { readAIStream } from './ai-stream.mjs';
 import { createBackupStore } from './backup.mjs';
 import { createLanguageService } from './language-service.mjs';
+import { createDebugger } from './debugger.mjs';
+import { createTesting } from './testing.mjs';
+import { prepareChanges } from './ai-changes.mjs';
 
 const HOME = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(HOME, 'data');
@@ -46,7 +49,7 @@ if (process.argv.includes('--stop')) {
 }
 
 const defaults = { workspace: DEFAULT_WORKSPACE, provider: 'custom', protocol: 'chat', baseUrl: '', model: '', encryptedKey: '', tools: { python: '', c: '', cpp: '' }, timeout: 120, anonymous: false, locale: 'zh-CN', streaming: true };
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const aiJobs = new Set();
 let config;
 try { config = { ...defaults, ...JSON.parse(await fs.readFile(CONFIG_FILE, 'utf8')) }; }
@@ -193,7 +196,7 @@ async function projectState() {
   return { project: { ...project, file: PROJECT_FILE, environmentBusy: !!environmentJob }, tools: await detectTools(project) };
 }
 async function createEnvironment() {
-  if (environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先等待环境创建完成或停止正在运行的程序。', 409);
+  if (extraBusy() || environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先等待环境创建完成或停止正在运行的程序。', 409);
   const job = { child: null }; environmentJob = job;
   const root = ROOT; let environmentName = '.venv';
   try {
@@ -449,13 +452,25 @@ async function aiRequest(data, overrides = {}) {
   if (complete) content = content.replace(/^```[^\n]*\n/, '').replace(/\n```\s*$/, '');
   return { text: content, model: apiConfig.model, usage: result.usage || null };
 }
-const mentor = createMentorController({ dataDir: DATA, getWorkspace: () => ROOT, broadcast: emit, askAI: ({ system, messages, signal, maxTokens }) => aiRequest({ kind: 'mentor', messages }, { system, messages, signal, maxTokens }) });
+const mentor = createMentorController({ dataDir: DATA, getWorkspace: () => ROOT, broadcast: emit, getLocale: () => config.locale, askAI: ({ system, messages, signal, maxTokens }) => aiRequest({ kind: 'mentor', messages }, { system, messages, signal, maxTokens }) });
 const languages = createLanguageService({ home: HOME, dataDir: DATA, getWorkspace: () => ROOT, safePath, projectState, broadcast: emit });
+const executionOptions = { home: HOME, dataDir: DATA, getWorkspace: () => ROOT, safePath, projectState, broadcast: emit, killChild, timeout: () => Math.max(10, Math.min(600, Number(config.timeout) || 120)) };
+const debugging = createDebugger(executionOptions);
+const testing = createTesting(executionOptions);
+let executionPending = false;
+function extraBusy() { return executionPending || debugging.busy() || testing.busy(); }
+async function enrichMentor(data) {
+  if (!data.context) return data;
+  const tests = data.context.tests?.id ? await testing.evidence(data.context.tests.id) : null;
+  const debug = debugging.snapshot();
+  return { ...data, context: { ...data.context, tests, debug: data.context.debug?.id === debug.id ? debug : null } };
+}
 const backups = createBackupStore({ dataDir: DATA, version: VERSION, protect: protectKey });
 // Backup errors are visible in settings, while local editing can still start.
 let backupError = '';
 try { await backups.beforeUpgrade(); } catch (error) { backupError = cleanError(error); }
 async function shutdown() {
+  await debugging.stop(); await testing.stop();
   mentor.abortAll();
   languages.reset(); for (const controller of aiJobs) controller.abort();
   if (environmentJob?.child) await killChild(environmentJob.child);
@@ -481,7 +496,7 @@ server = http.createServer(async (req, res) => {
       if (route === 'GET /api/backups') return json(res, { backups: await backups.list(), error: backupError });
       if (route === 'POST /api/backups/export') { await body(req); await mentor.flush(); return json(res, await backups.capture('manual')); }
       if (route === 'POST /api/backups/import' || route === 'POST /api/backups/migrate') {
-        if (environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先停止程序，再恢复备份。', 409);
+        if (extraBusy() || environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先停止程序，再恢复备份。', 409);
         const data = await body(req, 16_000_000);
         let files;
         if (route.endsWith('/migrate')) {
@@ -520,7 +535,7 @@ server = http.createServer(async (req, res) => {
           await mentor.replaceStored(previous['mentor-sessions.json'] ? JSON.parse(previous['mentor-sessions.json']) : { version: 1, sessions: {} });
           throw error;
         }
-        toolsCache = null; pythonEnvironmentCache = null; currentRun = null; backupError = '';
+        toolsCache = null; pythonEnvironmentCache = null; currentRun = null; testing.reset(); backupError = '';
         return json(res, { ok: true, backupBeforeRestore: rollback.name });
       }
       if (route === 'POST /api/language/sync') return json(res, await languages.sync(await body(req)));
@@ -528,10 +543,10 @@ server = http.createServer(async (req, res) => {
         const data = await body(req); const controller = new AbortController(); const disconnect = () => { if (!res.writableEnded) controller.abort(); }; res.on('close', disconnect);
         try { return json(res, await languages.query(data, controller.signal)); } finally { res.off('close', disconnect); }
       }
-      if (route === 'GET /api/state') return json(res, { settings: publicConfig(), ...await projectState(), tree: await tree(), run: currentRun ? { id: currentRun.id, phase: currentRun.phase, path: currentRun.path, sourceFingerprint: currentRun.sourceFingerprint, output: currentRun.output, code: currentRun.code, stopped: currentRun.stopping } : null });
+      if (route === 'GET /api/state') return json(res, { settings: publicConfig(), ...await projectState(), tree: await tree(), debug: debugging.snapshot(), tests: testing.snapshot(), run: currentRun ? { id: currentRun.id, phase: currentRun.phase, path: currentRun.path, sourceFingerprint: currentRun.sourceFingerprint, output: currentRun.output, code: currentRun.code, stopped: currentRun.stopping } : null });
       if (route === 'GET /api/project') return json(res, await projectState());
       if (route === 'POST /api/project') {
-        if (environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先等待环境操作完成或停止程序，再修改项目配置。', 409);
+        if (extraBusy() || environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先等待环境操作完成或停止程序，再修改项目配置。', 409);
         const data = normalizeProject(await body(req));
         const file = await safePath(PROJECT_FILE, true);
         const temp = `${file}.studio-${crypto.randomBytes(5).toString('hex')}.tmp`;
@@ -542,9 +557,29 @@ server = http.createServer(async (req, res) => {
         return json(res, { ...await projectState(), tree: await tree() });
       }
       if (route === 'POST /api/project/venv') { await body(req); return json(res, await createEnvironment()); }
+      if (route === 'GET /api/debug') return json(res, debugging.snapshot());
+      if (route === 'GET /api/tests') return json(res, testing.snapshot());
+      if (route === 'POST /api/debug/start' || route === 'POST /api/tests/start') {
+        if (extraBusy() || environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先停止运行、调试或测试。', 409);
+        executionPending = true;
+        try {
+          const data = await body(req);
+          if (route === 'POST /api/debug/start') return json(res, await debugging.start({ ...data, args: parseArguments(data.args) }));
+          return json(res, await testing.start(data));
+        } finally { executionPending = false; }
+      }
+      if (route === 'POST /api/debug/control') return json(res, await debugging.control(await body(req)));
+      if (route === 'POST /api/debug/breakpoints') return json(res, await debugging.breakpoints(await body(req)));
+      if (route === 'POST /api/tests/stop') { await body(req); return json(res, await testing.stop()); }
+      if (route === 'POST /api/changes') {
+        const data = await body(req); const controller = new AbortController(); aiJobs.add(controller);
+        const disconnect = () => { if (!res.writableEnded) controller.abort(); }; res.on('close', disconnect);
+        try { return json(res, await prepareChanges({ ...data, tests: data.tests?.id ? await testing.evidence(data.tests.id) : null }, { safePath, signal: controller.signal, askAI: options => aiRequest({ kind: 'changes', messages: options.messages }, options) })); }
+        finally { aiJobs.delete(controller); res.off('close', disconnect); }
+      }
       if (route === 'GET /api/mentor') return json(res, await mentor.handle('state'));
       if (req.method === 'POST' && url.pathname.startsWith('/api/mentor/')) {
-        const data = await body(req); const controller = new AbortController();
+        const data = await enrichMentor(await body(req)); const controller = new AbortController();
         const disconnect = () => { if (!res.writableEnded) controller.abort(); }; res.on('close', disconnect);
         try { return json(res, await mentor.handle(url.pathname.slice('/api/mentor/'.length), data, { signal: controller.signal })); }
         finally { res.off('close', disconnect); }
@@ -575,12 +610,12 @@ server = http.createServer(async (req, res) => {
         return json(res, { path: selected });
       }
       if (route === 'POST /api/workspace') {
-        if (environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先等待环境操作完成或停止正在运行的程序。', 409);
+        if (extraBusy() || environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先等待环境操作完成或停止正在运行的程序。', 409);
         workspacePending = true;
         try {
         const data = await body(req); const root = await fs.realpath(data.path);
         if (!(await fs.stat(root)).isDirectory()) fail('请选择有效的文件夹。');
-        mentor.abortAll(); languages.reset(); for (const controller of aiJobs) controller.abort(); ROOT = root; config.workspace = root; await persist(); currentRun = null; pythonEnvironmentCache = null;
+        mentor.abortAll(); languages.reset(); for (const controller of aiJobs) controller.abort(); testing.reset(); ROOT = root; config.workspace = root; await persist(); currentRun = null; pythonEnvironmentCache = null;
         return json(res, { settings: publicConfig(), ...await projectState(), tree: await tree() });
         } finally { workspacePending = false; }
       }
@@ -617,7 +652,7 @@ server = http.createServer(async (req, res) => {
         } finally { aiJobs.delete(controller); res.off('close', disconnect); }
       }
       if (route === 'POST /api/run') {
-        if (environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('已有程序或环境操作正在运行，请先停止或等待完成。', 409);
+        if (extraBusy() || environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('已有程序或环境操作正在运行，请先停止或等待完成。', 409);
         runPending = true;
         try {
         const data = await body(req); const file = await safePath(data.path);

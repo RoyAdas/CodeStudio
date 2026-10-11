@@ -151,7 +151,7 @@ try {
   const packagedFiles = await listFiles(appRoot);
   assert.equal(packagedFiles.filter(name => !name.startsWith('node_modules/pyright/dist/typeshed-fallback/')).some(name => /(^|\/)(data|backups|\.git)(\/|$)/i.test(name)), false, 'Release must exclude personal data, backups and development dependencies.');
   assert.equal(packagedFiles.some(name => /(^|\/)(settings\.json|running\.json|mentor-sessions\.json)$|\.log$/i.test(name)), false, 'Release must exclude settings and logs.');
-  for (const name of ['Start.cmd', 'Stop.cmd', '启动工作台.cmd', '停止工作台.cmd', 'launch.ps1', 'dist/index.html', 'README.md', 'README.en.md', 'LICENSE', 'licenses/Node-LICENSE.txt', 'node_modules/pyright/LICENSE.txt', 'language-runtime/clangd/bin/clangd.exe', 'language-service.mjs']) assert.ok(packagedFiles.includes(name), `Required package file is missing: ${name}`);
+  for (const name of ['Start.cmd', 'Stop.cmd', '启动工作台.cmd', '停止工作台.cmd', 'launch.ps1', 'dist/index.html', 'README.md', 'README.en.md', 'LICENSE', 'licenses/Node-LICENSE.txt', 'node_modules/pyright/LICENSE.txt', 'language-runtime/clangd/bin/clangd.exe', 'language-service.mjs', 'debugger.mjs', 'testing.mjs', 'ai-changes.mjs', 'test-runner.py', 'debug-runtime/lib/debugpy/adapter/__main__.py', 'debug-runtime/lib/debugpy-1.8.22.dist-info/licenses/LICENSE']) assert.ok(packagedFiles.includes(name), `Required package file is missing: ${name}`);
   const exampleFiles = await listFiles(path.join(projectRoot, 'examples'));
   const workspaceFiles = await listFiles(path.join(appRoot, 'workspace'));
   assert.deepEqual(workspaceFiles, exampleFiles, 'Packaged workspace must contain only public examples.');
@@ -266,6 +266,18 @@ try {
   await member('package_language.c', languageFiles[1].content.split('\n')[1].indexOf('item.') + 5, 'score');
   await member('package_language.cpp', languageFiles[2].content.split('\n')[1].indexOf('widget.') + 7, 'hello');
   check('Bundled clangd provides offline C and C++ member completion under a Chinese installation path');
+  if (state.tools.python.available) {
+    await call('new', { path: 'package_debug.py', type: 'file' }); await call('files', { path: 'package_debug.py', content: 'value = 7\nprint(value)\n' });
+    await call('debug/start', { path: 'package_debug.py', breakpoints: { 'package_debug.py': [2] } }, 30000);
+    await eventually(async () => { const debug = await call('debug'); return debug.phase === 'paused' && debug.variables.some(item => item.name === 'value' && item.value === '7'); }, 25000);
+    await call('debug/control', { action: 'stop' });
+    check('Bundled Python debugger works offline in the packaged virtual environment under a Chinese path');
+    await call('new', { path: 'test_package.py', type: 'file' }); await call('files', { path: 'test_package.py', content: 'import unittest\nclass Package(unittest.TestCase):\n    def test_value(self): self.assertEqual(2 + 2, 4)\n' });
+    await call('tests/start', { pattern: 'test_package.py' }); let result;
+    await eventually(async () => { result = await call('tests'); return result.phase === 'finished'; });
+    assert.equal(result.passed, true, JSON.stringify(result)); assert.equal(result.cases.length, 1);
+    check('Packaged unittest reports a real passing case without development dependencies');
+  }
   await call('settings', { locale: 'en' }); const backup = await call('backups/export', {});
   assert.ok(backup.backup.encryptedData); assert.equal(backup.backup.settings, undefined);
   await call('settings', { locale: 'zh-CN' }); await call('backups/import', { backup: backup.backup });

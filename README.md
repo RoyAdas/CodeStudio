@@ -4,13 +4,13 @@
 
 在浏览器里编写和运行本机代码，让 AI 导师按小步骤带你完成自己的项目。
 
-CodeStudio 是 Windows 本地编程学习工作台，使用 Monaco 编辑器，提供 Python、C/C++ 编辑运行、智能补全和可自定义接口的 AI 功能。v0.3.0 增加本地智能补全、流式 AI 对话、分级导师提示、加密备份与旧版迁移，以及中英文界面。
+CodeStudio 是 Windows 本地编程学习工作台，使用 Monaco 编辑器，提供 Python、C/C++ 编辑运行、智能补全和可自定义接口的 AI 功能。v0.4.0 增加 Python 断点调试、真实测试与导师验收，以及可预览和撤销的 AI 修改。
 
 ![CodeStudio 工作台：文件树、代码编辑器、运行输出和实时导师](docs/images/workbench.png)
 
 ## 下载并启动
 
-1. 下载 [CodeStudio-v0.3.0-windows-x64.zip](https://github.com/RoyAdas/CodeStudio/releases/download/v0.3.0/CodeStudio-v0.3.0-windows-x64.zip)，或查看 [最新 Release](https://github.com/RoyAdas/CodeStudio/releases/latest)。GitHub 的 “Source code” 压缩包是开发源码，不是一键启动包。
+1. 下载 [CodeStudio-v0.4.0-windows-x64.zip](https://github.com/RoyAdas/CodeStudio/releases/download/v0.4.0/CodeStudio-v0.4.0-windows-x64.zip)，或查看 [最新 Release](https://github.com/RoyAdas/CodeStudio/releases/latest)。GitHub 的 “Source code” 压缩包是开发源码，不是一键启动包。
 2. **完整解压**到可写文件夹。不要直接在压缩包里运行，也不要只复制启动脚本。
 3. 双击 `Start.cmd` 或 `启动工作台.cmd`，浏览器会打开本机工作台。
 
@@ -18,7 +18,7 @@ CodeStudio 是 Windows 本地编程学习工作台，使用 Monaco 编辑器，�
 
 默认地址是 `http://127.0.0.1:8765`。端口被占用时启动器会选择其他可用端口，请以它打开的地址为准。双击 `Stop.cmd` 或 `停止工作台.cmd` 停止服务。关闭浏览器不会停止后台服务。
 
-当前支持 **Windows x64**。macOS、Linux、手机和公网部署不在 v0.3.0 的支持范围内。
+当前支持 **Windows x64**。macOS、Linux、手机和公网部署不在 v0.4.0 的支持范围内。
 
 ## 可以做什么
 
@@ -27,14 +27,18 @@ CodeStudio 是 Windows 本地编程学习工作台，使用 Monaco 编辑器，�
 - 识别或创建项目 Python 虚拟环境，保存每个工作区的运行配置。
 - 使用 Python/C/C++ 成员补全、参数提示、悬停说明、工作区内定义跳转和实时错误诊断；普通补全无需 AI。
 - 请求 AI 补全、解释代码或排查运行错误；建议经你确认后才插入编辑器。
+- 使用 Python 断点、单步、调用栈和变量观察执行；运行 unittest，结合真实测试进行导师验收。
+- 预览 AI 多文件修改与测试建议，选择接受为未保存草稿，并可撤销。
 - 提交自己的学习任务，让导师生成路线，每次给出一个目标、提示和验证方法。
 - 默认停笔约 5 秒后及运行结束后检查代码；自动请求至少间隔 20 秒，默认每小时最多 30 次，可调整、暂停或改为手动检查。检查通过后由你决定进入下一步。
 
 在左侧“项目设置”选择 Python 环境、C/C++ 构建文件、头文件目录与语言标准。F5 会保存所有打开的修改，再按项目配置运行；C/C++ 列表留空则继续单文件运行。详见 [项目环境与构建](docs/project.zh-CN.md)。
 
-暂不支持扩展市场、断点调试、CMake 和外部库链接配置。默认 C11/C++17，可选择编译器支持的其他标准。
+支持 Python 断点调试与 unittest 测试；暂不支持扩展市场、C/C++ 调试、CMake 和外部库链接配置。默认 C11/C++17，可选择编译器支持的其他标准。
 
 流式回答、三档提示、备份迁移与界面语言切换详见 [v0.3 编辑器与升级指南](docs/editor.zh-CN.md)。
+
+调试、测试与 AI 修改详见 [v0.4 工作流指南](docs/workflow.zh-CN.md)。普通调试和测试无需 AI；生成或解释建议使用你配置的接口。
 
 ## 第一次练习
 
@@ -69,6 +73,7 @@ CodeStudio 是 Windows 本地编程学习工作台，使用 Monaco 编辑器，�
 ```sh
 npm ci
 npm run prepare:languages
+npm run prepare:debugger
 npm run build
 npm start
 ```
@@ -92,6 +97,6 @@ npm run package:win
 
 遇到问题请提交 Issue，提供软件版本、Windows 版本、复现步骤和已去除私人内容的日志。不要附上 API 密钥、整个 `data/` 文件夹或未经检查的项目代码。
 
-后续方向包括调试器、更完整的构建系统与更多平台支持。版本变化见 [CHANGELOG](CHANGELOG.md)。
+后续方向包括 C/C++ 调试、Git 面板、更完整的构建系统与更多平台支持。版本变化见 [CHANGELOG](CHANGELOG.md)。
 
 项目采用 [MIT 许可证](LICENSE)，作者为 RoyAdas。第三方组件的授权文件保留在 [licenses](licenses/) 中。CodeStudio 是独立项目，与 Microsoft VS Code、OpenAI、DeepSeek 等服务商没有官方关联。

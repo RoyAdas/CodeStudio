@@ -33,7 +33,7 @@ export async function closeServer(server) {
 export async function createFixture({ files = {}, settings = {}, requireDist = false, requireLanguages = false } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'code-studio-test-'));
   try {
-    for (const name of ['server.mjs', 'mentor.mjs', 'mentor-shared.mjs', 'project.mjs', 'ai-stream.mjs', 'backup.mjs', 'language-service.mjs']) {
+    for (const name of ['server.mjs', 'mentor.mjs', 'mentor-shared.mjs', 'project.mjs', 'ai-stream.mjs', 'backup.mjs', 'language-service.mjs', 'debugger.mjs', 'testing.mjs', 'ai-changes.mjs', 'test-runner.py']) {
       await fs.copyFile(path.join(projectRoot, name), path.join(root, name));
     }
     if (requireLanguages) {
@@ -41,6 +41,7 @@ export async function createFixture({ files = {}, settings = {}, requireDist = f
       await fs.symlink(path.join(projectRoot, 'node_modules/pyright'), path.join(root, 'node_modules/pyright'), process.platform === 'win32' ? 'junction' : 'dir');
       await fs.symlink(path.join(projectRoot, 'language-runtime'), path.join(root, 'language-runtime'), process.platform === 'win32' ? 'junction' : 'dir');
     }
+    if (requireLanguages) await fs.symlink(path.join(projectRoot, 'debug-runtime'), path.join(root, 'debug-runtime'), process.platform === 'win32' ? 'junction' : 'dir');
     const dist = path.join(projectRoot, 'dist');
     try {
       await fs.access(path.join(dist, 'index.html'));

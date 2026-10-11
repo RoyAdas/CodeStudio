@@ -4,13 +4,13 @@
 
 Write and run code on your own computer in a browser, with an AI mentor that guides you through your projects one step at a time.
 
-CodeStudio is a local programming workbench for Windows, built with Monaco Editor. It offers Python and C/C++ editing and execution, semantic completion, and AI features with configurable API endpoints. v0.3.0 adds local semantic completion, streaming AI chat, mentor hint levels, encrypted backups and migration, and a Chinese/English interface.
+CodeStudio is a local programming workbench for Windows, built with Monaco Editor. It offers Python and C/C++ editing and execution, semantic completion, and AI features with configurable API endpoints. v0.4.0 adds Python breakpoint debugging, real test results for mentor acceptance, and reviewable AI code changes.
 
 ![CodeStudio workbench with a file tree, editor, execution output, and task mentor](docs/images/workbench.png)
 
 ## Download and start
 
-1. Download [CodeStudio-v0.3.0-windows-x64.zip](https://github.com/RoyAdas/CodeStudio/releases/download/v0.3.0/CodeStudio-v0.3.0-windows-x64.zip), or visit the [latest Release](https://github.com/RoyAdas/CodeStudio/releases/latest). GitHub's “Source code” archives are for development, not the ready-to-run package.
+1. Download [CodeStudio-v0.4.0-windows-x64.zip](https://github.com/RoyAdas/CodeStudio/releases/download/v0.4.0/CodeStudio-v0.4.0-windows-x64.zip), or visit the [latest Release](https://github.com/RoyAdas/CodeStudio/releases/latest). GitHub's “Source code” archives are for development, not the ready-to-run package.
 2. **Extract the entire archive** into a writable folder. Do not run it inside the ZIP or copy only the launcher.
 3. Double-click `Start.cmd` or `启动工作台.cmd`. Your browser will open the local workbench.
 
@@ -18,7 +18,7 @@ The package includes Node, so you do not need npm or an editor download to start
 
 The default address is `http://127.0.0.1:8765`. If the port is occupied, the launcher selects another available port; use the address it opens. Double-click `Stop.cmd` or `停止工作台.cmd` to stop the service. Closing the browser leaves the background service running.
 
-v0.3.0 supports **Windows x64**. macOS, Linux, mobile devices, and public hosting are outside this release's supported scope.
+v0.4.0 supports **Windows x64**. macOS, Linux, mobile devices, and public hosting are outside this release's supported scope.
 
 ## Features and scope
 
@@ -27,12 +27,16 @@ v0.3.0 supports **Windows x64**. macOS, Linux, mobile devices, and public hostin
 - Detect or create project Python virtual environments and save workspace-specific run settings.
 - Use Python/C/C++ member completion, signature help, hover, workspace definition navigation and live diagnostics without AI.
 - Request AI completion, code explanations, or help with runtime errors. Completion suggestions require your approval before insertion.
+- Inspect Python breakpoints, stepping, call stacks and variables; run unittest and review real results with the mentor.
+- Review AI multi-file edits and generated tests, accept selected files as unsaved drafts and undo.
 - Give the task mentor a project goal. It generates a route with a goal, hint, and verification method for each step.
 - Check code after about 5 seconds without typing and after execution finishes. Automatic requests are at least 20 seconds apart and limited to 30 per hour by default. Change the limits, pause, or switch to manual checking. You choose when to advance after a successful review.
 
 Use **项目设置 / Project Settings** below the file tree to choose Python environments, build sources, header directories, and language standards. F5 saves all modified open files before running; empty C/C++ lists keep single-file execution. See [project environments and builds](docs/project.en.md).
 
-Extension marketplaces, breakpoint debugging, CMake, and external-library link options are not included. Defaults are C11/C++17; selectable alternatives require compiler support.
+Python debugging and unittest are supported. Extension marketplaces, C/C++ debugging, CMake and external-library link options are not included. Defaults are C11/C++17; selectable alternatives require compiler support.
+
+See the [v0.4 workflow guide](docs/workflow.en.md) for debugging, tests and AI changes. Local debugging and tests require no AI; generated suggestions use your configured provider.
 
 ## Try your first exercise
 
@@ -67,6 +71,7 @@ Install a supported Node.js version (see `engines` in `package.json`) and npm, t
 ```sh
 npm ci
 npm run prepare:languages
+npm run prepare:debugger
 npm run build
 npm start
 ```
@@ -90,7 +95,7 @@ Only source code, examples, and documentation belong in the repository. Do not c
 
 When reporting a bug, include the app version, Windows version, reproduction steps, and logs with private content removed. Do not attach API keys, the entire `data/` directory, or project code you have not reviewed for secrets.
 
-Future work includes debugging, richer build systems and additional platforms. See [CHANGELOG](CHANGELOG.md) for release history.
+Future work includes C/C++ debugging, Git tools, richer build systems and additional platforms. See [CHANGELOG](CHANGELOG.md) for release history.
 
 The project is available under the [MIT license](LICENSE), authored by RoyAdas. Third-party notices are retained in [licenses](licenses/). CodeStudio is an independent project and is not officially affiliated with Microsoft VS Code, OpenAI, DeepSeek, or other providers.
 

@@ -39,11 +39,12 @@ async function powershell(script, environment) {
 try {
   await fs.mkdir(path.join(app, 'runtime'), { recursive: true });
   // A fixed allowlist keeps local settings, private workspaces and logs out of releases.
-  for (const name of ['dist', 'docs', 'licenses', 'examples', 'server.mjs', 'mentor.mjs', 'mentor-shared.mjs', 'project.mjs', 'ai-stream.mjs', 'backup.mjs', 'language-service.mjs', 'language-runtime.json', 'Start.cmd', 'Stop.cmd', '启动工作台.cmd', '停止工作台.cmd', 'launch.ps1', 'README.md', 'README.en.md', 'CONTRIBUTING.md', 'LICENSE', 'CHANGELOG.md', 'runtime-version.json']) {
+  for (const name of ['dist', 'docs', 'licenses', 'examples', 'server.mjs', 'mentor.mjs', 'mentor-shared.mjs', 'project.mjs', 'ai-stream.mjs', 'backup.mjs', 'language-service.mjs', 'language-runtime.json', 'debugger.mjs', 'testing.mjs', 'ai-changes.mjs', 'test-runner.py', 'debug-runtime.json', 'Start.cmd', 'Stop.cmd', '启动工作台.cmd', '停止工作台.cmd', 'launch.ps1', 'README.md', 'README.en.md', 'CONTRIBUTING.md', 'LICENSE', 'CHANGELOG.md', 'runtime-version.json']) {
     await fs.cp(path.join(root, name), path.join(app, name), { recursive: true });
   }
   await fs.cp(path.join(root, 'node_modules/pyright'), path.join(app, 'node_modules/pyright'), { recursive: true });
   await fs.cp(path.join(root, 'language-runtime/clangd'), path.join(app, 'language-runtime/clangd'), { recursive: true });
+  await fs.cp(path.join(root, 'debug-runtime/lib'), path.join(app, 'debug-runtime/lib'), { recursive: true, filter: file => !file.split(path.sep).includes('__pycache__') && !file.endsWith('.pyc') });
   await fs.cp(path.join(root, 'examples'), path.join(app, 'workspace'), { recursive: true });
   const unpacked = path.join(staging, 'node');
   await powershell('$ErrorActionPreference="Stop"; Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::ExtractToDirectory($env:STUDIO_ARCHIVE, $env:STUDIO_UNPACK)', { STUDIO_ARCHIVE: nodeArchive, STUDIO_UNPACK: unpacked });

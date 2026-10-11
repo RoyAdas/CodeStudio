@@ -1,6 +1,6 @@
 {
   "name": "code-studio-local",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A local AI programming learning workbench for Windows",
   "license": "MIT",
   "author": "RoyAdas",
@@ -21,7 +21,8 @@
     "test:e2e": "node tests/run-browser-tests.mjs",
     "test:package": "node tests/package-smoke.mjs",
     "package:win": "node scripts/package-windows.mjs",
-    "prepare:languages": "node scripts/prepare-languages.mjs"
+    "prepare:languages": "node scripts/prepare-languages.mjs",
+    "prepare:debugger": "node scripts/prepare-debugger.mjs"
   },
   "dependencies": {
     "lucide-react": "1.31.0",

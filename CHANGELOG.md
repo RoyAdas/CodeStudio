@@ -1,4 +1,13 @@
-# Changelog
+# Changelog / 更新记录
+
+## 0.4.0 — 2026-10-11
+
+- Bundle debugpy 1.8.22 for Python breakpoints, stepping, call stacks and variables using project environments.
+- Add real unittest results, source freshness checks, cancellation and mentor acceptance guards.
+- Add multi-file AI difference review, selected draft acceptance, undo and test suggestions.
+- Keep bilingual UI, encrypted upgrade migration and local Windows launch.
+
+中文：新增 Python 断点调试、真实测试与导师验收，以及可预览和撤销的 AI 修改。
 
 ## 0.3.0 — 2026-10-11
 
@@ -10,7 +19,6 @@
 - Update Vite and DOMPurify security fixes.
 
 中文：新增本地智能补全、流式 AI、分级导师提示、加密备份与迁移，以及中英文界面。
- / 更新记录
 
 ## v0.2.0 — 2026-10-11
 

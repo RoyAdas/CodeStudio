@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { createMentorController } from './mentor.mjs';
 import { textFingerprint } from './mentor-shared.mjs';
+import { PROJECT_FILE, normalizeProject, readProject } from './project.mjs';
 
 const HOME = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(HOME, 'data');
@@ -19,9 +20,13 @@ const SESSION = crypto.randomBytes(32).toString('hex');
 const CONTROL = crypto.randomBytes(32).toString('hex');
 const peers = new Set();
 let currentRun = null;
+let runPending = false;
+let workspacePending = false;
 let server;
 let port;
 let toolsCache;
+let pythonEnvironmentCache;
+let environmentJob = null;
 await fs.mkdir(DATA, { recursive: true });
 await fs.mkdir(DEFAULT_WORKSPACE, { recursive: true });
 
@@ -85,6 +90,8 @@ async function safePath(relative, allowNew = false) {
 }
 const ignored = new Set(['node_modules', '.git', '.venv', 'venv', '__pycache__', '.code-studio-build', '.DS_Store']);
 async function tree() {
+  const project = await readProject(ROOT, safePath);
+  const environmentFolder = project.config.python.venv;
   let count = 0; let truncated = false;
   async function walk(dir, prefix = '', depth = 0) {
     if (depth > 10) { truncated = true; return []; }
@@ -92,7 +99,7 @@ async function tree() {
     entries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
     const result = [];
     for (const entry of entries) {
-      if (ignored.has(entry.name) || entry.isSymbolicLink()) continue;
+      if (ignored.has(entry.name) || entry.name === environmentFolder || entry.name.startsWith('.studio-build-') || entry.isSymbolicLink()) continue;
       if (++count > 4000) { truncated = true; break; }
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) result.push({ name: entry.name, path: relative, type: 'directory', children: await walk(path.join(dir, entry.name), relative, depth + 1) });
@@ -142,7 +149,7 @@ async function capture(executable, args, input = '', timeout = 4000) {
     child.stdin.on('error', () => {}); child.stdin.end(input);
   });
 }
-async function detectTools() {
+async function detectBaseTools() {
   if (toolsCache) return toolsCache;
   const definitions = {
     python: { names: ['python.exe', 'python3.exe'], candidates: ['C:\\Python314\\python.exe', 'C:\\Python313\\python.exe', ...['Python314', 'Python313', 'Python312'].map(version => path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', version, 'python.exe'))] },
@@ -152,6 +159,62 @@ async function detectTools() {
   const entries = await Promise.all(Object.entries(definitions).map(async ([name, definition]) => [name, await findExecutable(config.tools?.[name] ? [] : definition.names, config.tools?.[name] ? [config.tools[name]] : definition.candidates)]));
   const output = { ...Object.fromEntries(entries), javascript: { path: process.execPath, available: true, version: process.version } };
   toolsCache = output; return output;
+}
+async function detectTools(project) {
+  project ??= await readProject(ROOT, safePath);
+  const base = await detectBaseTools();
+  const { mode, venv } = project.config.python;
+  if (mode === 'system') return { ...base, python: { ...base.python, environment: 'system' } };
+  const relative = `${venv}/${process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'}`;
+  let pythonPath; let signature;
+  try {
+    const folder = await safePath(venv);
+    if (!(await fs.stat(folder)).isDirectory()) throw Error('虚拟环境路径不是目录。');
+    const cfg = await safePath(`${venv}/pyvenv.cfg`);
+    if (!(await fs.stat(cfg)).isFile()) throw Error('虚拟环境缺少 pyvenv.cfg。');
+    pythonPath = await safePath(relative);
+    const stat = await fs.stat(pythonPath);
+    signature = `${ROOT}|${pythonPath}|${stat.mtimeMs}`;
+  } catch (error) {
+    let exists = false; try { await fs.lstat(path.join(ROOT, venv)); exists = true; } catch {}
+    if (mode === 'auto' && !exists) return { ...base, python: { ...base.python, environment: 'system' } };
+    return { ...base, python: { path: path.join(ROOT, relative), available: false, environment: 'venv', version: `项目虚拟环境不可用，请创建 ${venv}、检查环境或改用系统 Python。` } };
+  }
+  if (pythonEnvironmentCache?.signature !== signature) pythonEnvironmentCache = { signature, tool: await findExecutable([], [pythonPath]) };
+  return { ...base, python: { ...pythonEnvironmentCache.tool, environment: 'venv' } };
+}
+async function projectState() {
+  const project = await readProject(ROOT, safePath);
+  return { project: { ...project, file: PROJECT_FILE, environmentBusy: !!environmentJob }, tools: await detectTools(project) };
+}
+async function createEnvironment() {
+  if (environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先等待环境创建完成或停止正在运行的程序。', 409);
+  const job = { child: null }; environmentJob = job;
+  const root = ROOT; let environmentName = '.venv';
+  try {
+    const project = await readProject(root, safePath);
+    if (project.error) fail(project.error);
+    environmentName = project.config.python.venv;
+    const folder = await safePath(environmentName, true);
+    const base = (await detectBaseTools()).python;
+    if (!base.available) fail('请先在运行环境中配置有效的系统 Python。');
+    // No --clear or --upgrade: reserve a new folder and never reuse existing data.
+    try { await fs.mkdir(folder); } catch (error) { if (error.code === 'EEXIST') fail('虚拟环境目录已经存在；为保护现有文件，不会覆盖。请选用它、改名或手动整理后重试。', 409); throw error; }
+    await new Promise((resolve, reject) => {
+      const child = spawn(base.path, ['-m', 'venv', '--copies', folder], { cwd: root, windowsHide: true, env: { ...process.env, PYTHONUTF8: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      job.child = child; let output = ''; let timedOut = false;
+      const timer = setTimeout(() => { timedOut = true; void killChild(child); }, 180000);
+      for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { if (output.length < 10000) output += chunk.toString(); });
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+      child.once('close', code => { clearTimeout(timer); code === 0 && !timedOut ? resolve() : reject(Error(timedOut ? '虚拟环境创建超过 180 秒。' : `虚拟环境创建失败：${cleanError(output || `退出码 ${code}`)}`)); });
+    });
+    pythonEnvironmentCache = null;
+    const result = await projectState(); result.project.environmentBusy = false; return result;
+  } catch (error) {
+    // Leave a partially created environment for inspection; never recursively
+    // remove an environment directory that a user may have added files to.
+    fail(`${cleanError(error)} 请检查 ${environmentName}，原有项目文件不会覆盖。`, error.status || 400);
+  } finally { environmentJob = null; }
 }
 async function protectKey(value, decrypt = false) {
   if (process.platform !== 'win32') fail('此安装包使用 Windows 密钥保护，请在 Windows 上启动。');
@@ -224,33 +287,52 @@ async function execute(run, file, relative, language, args) {
   let code = -1;
   const temporaryFiles = [];
   try {
-    const available = await detectTools();
+    const available = run.tools;
     const tool = available[language];
     if (!tool?.available) fail('运行环境未检测到，请在设置中填写解释器或 GCC / Clang 路径。');
     run.extraPath = path.dirname(tool.path);
     const cwd = path.dirname(file);
     if (language === 'c' || language === 'cpp') {
-      // Some Windows MinGW linkers cannot open Unicode absolute output paths.
-      // Keep compiler arguments ASCII and preserve local quoted includes by
-      // compiling an exclusive temporary copy beside the original source.
-      const sourceName = `.studio-build-${run.id}.${language === 'c' ? 'c' : 'cpp'}`;
-      const source = path.join(cwd, sourceName);
+      // Compile beside each original file so local includes still work. Link
+      // ASCII object filenames from the project root to handle Unicode paths.
+      const buildRoot = run.projectBuild ? run.root : cwd;
       const targetName = `.studio-build-${run.id}.exe`;
-      const target = path.join(cwd, targetName);
-      const sourceHandle = await fs.open(source, 'wx'); temporaryFiles.push(source);
-      try {
-        const original = await fs.readFile(file);
-        const content = original.subarray(original[0] === 0xef && original[1] === 0xbb && original[2] === 0xbf ? 3 : 0);
-        // Retain original diagnostic lines and __FILE__, including Unicode names.
-        await sourceHandle.writeFile(Buffer.concat([Buffer.from(`#line 1 ${JSON.stringify(file)}\n`, 'utf8'), content]));
-      } finally { await sourceHandle.close(); }
+      const target = path.join(buildRoot, targetName);
       const targetHandle = await fs.open(target, 'wx'); temporaryFiles.push(target);
       await targetHandle.close();
-      emit('output', { text: `编译 ${relative} …\n`, channel: 'system' });
-      const compilation = await spawnRun(run, tool.path, [sourceName, '-o', targetName, language === 'c' ? '-std=c11' : '-std=c++17', '-Wall', '-Wextra', '-g', '-fdiagnostics-color=never'], cwd, 'compile');
-      emit('diagnostics', { path: relative, markers: diagnostics(compilation.captured.split(sourceName).join(file), relative) });
-      if (compilation.code !== 0 || run.stopping) code = compilation.code;
-      else { emit('output', { text: '编译成功，开始运行。\n', channel: 'system' }); code = (await spawnRun(run, target, args, cwd, 'run')).code; }
+      const objects = [];
+      for (const [index, unit] of run.sources.entries()) {
+        if (run.stopping) break;
+        const directory = path.dirname(unit.file);
+        const sourceLanguage = path.extname(unit.file).toLowerCase() === '.c' ? 'c' : 'cpp';
+        const compiler = available[sourceLanguage];
+        if (!compiler?.available) fail(`${sourceLanguage === 'c' ? 'C' : 'C++'} 编译器未就绪，请在运行环境中配置。`);
+        const sourceName = `.studio-build-${run.id}-${index}.${sourceLanguage === 'c' ? 'c' : 'cpp'}`;
+        const source = path.join(directory, sourceName);
+        const sourceHandle = await fs.open(source, 'wx'); temporaryFiles.push(source);
+        try {
+          const content = unit.content.replace(/^\uFEFF/, '');
+          await sourceHandle.writeFile(`#line 1 ${JSON.stringify(unit.file)}\n${content}`, 'utf8');
+        } finally { await sourceHandle.close(); }
+        const objectName = `.studio-build-${run.id}-${index}.o`;
+        const object = path.join(directory, objectName);
+        const objectHandle = await fs.open(object, 'wx'); temporaryFiles.push(object); await objectHandle.close();
+        const includes = run.includeDirs.flatMap(folder => ['-I', path.relative(directory, folder) || '.']);
+        emit('output', { text: `编译 ${unit.path} …\n`, channel: 'system' });
+        const compilation = await spawnRun(run, compiler.path, ['-c', sourceName, '-o', objectName, `-std=${sourceLanguage === 'c' ? run.build.cStandard : run.build.cppStandard}`, '-Wall', '-Wextra', '-g', '-fdiagnostics-color=never', ...includes], directory, 'compile');
+        emit('diagnostics', { path: unit.path, markers: diagnostics(compilation.captured.split(sourceName).join(unit.file), unit.path) });
+        if (compilation.code !== 0 || run.stopping) { code = compilation.code; break; }
+        const linkedName = `.studio-build-${run.id}-link-${index}.o`;
+        const linked = path.join(buildRoot, linkedName);
+        await fs.copyFile(object, linked, fs.constants.COPYFILE_EXCL); temporaryFiles.push(linked);
+        objects.push(linkedName);
+      }
+      if (objects.length === run.sources.length && !run.stopping) {
+        emit('output', { text: `链接 ${objects.length} 个源文件 …\n`, channel: 'system' });
+        const linked = await spawnRun(run, tool.path, [...objects, '-o', targetName], buildRoot, 'compile');
+        code = linked.code;
+        if (code === 0 && !run.stopping) { emit('output', { text: '编译成功，开始运行。\n', channel: 'system' }); code = (await spawnRun(run, target, args, buildRoot, 'run')).code; }
+      }
     } else {
       emit('output', { text: `运行 ${relative} …\n`, channel: 'system' });
       const result = await spawnRun(run, tool.path, language === 'python' ? ['-u', file, ...args] : [file, ...args], cwd, 'run');
@@ -333,6 +415,7 @@ async function aiRequest(data, overrides = {}) {
 const mentor = createMentorController({ dataDir: DATA, getWorkspace: () => ROOT, broadcast: emit, askAI: ({ system, messages, signal, maxTokens }) => aiRequest({ kind: 'mentor', messages }, { system, messages, signal, maxTokens }) });
 async function shutdown() {
   mentor.abortAll();
+  if (environmentJob?.child) await killChild(environmentJob.child);
   if (currentRun?.child) { currentRun.stopping = true; await killChild(currentRun.child); }
   try { const s = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); if (s.pid === process.pid) await fs.unlink(STATE_FILE); } catch {}
   for (const peer of peers) peer.end();
@@ -352,7 +435,19 @@ server = http.createServer(async (req, res) => {
       const token = req.headers['x-studio-token'] || (url.pathname === '/api/events' ? url.searchParams.get('token') : '');
       if (token !== SESSION) fail('会话已更新，请刷新页面。', 403);
       const route = `${req.method} ${url.pathname}`;
-      if (route === 'GET /api/state') return json(res, { settings: publicConfig(), tools: await detectTools(), tree: await tree(), run: currentRun ? { id: currentRun.id, phase: currentRun.phase, path: currentRun.path, sourceFingerprint: currentRun.sourceFingerprint, output: currentRun.output, code: currentRun.code, stopped: currentRun.stopping } : null });
+      if (route === 'GET /api/state') return json(res, { settings: publicConfig(), ...await projectState(), tree: await tree(), run: currentRun ? { id: currentRun.id, phase: currentRun.phase, path: currentRun.path, sourceFingerprint: currentRun.sourceFingerprint, output: currentRun.output, code: currentRun.code, stopped: currentRun.stopping } : null });
+      if (route === 'GET /api/project') return json(res, await projectState());
+      if (route === 'POST /api/project') {
+        if (environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先等待环境操作完成或停止程序，再修改项目配置。', 409);
+        const data = normalizeProject(await body(req));
+        const file = await safePath(PROJECT_FILE, true);
+        const temp = `${file}.studio-${crypto.randomBytes(5).toString('hex')}.tmp`;
+        try { await fs.writeFile(temp, `${JSON.stringify(data, null, 2)}\n`, { flag: 'wx' }); await fs.rename(temp, file); }
+        finally { await fs.unlink(temp).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
+        pythonEnvironmentCache = null;
+        return json(res, { ...await projectState(), tree: await tree() });
+      }
+      if (route === 'POST /api/project/venv') { await body(req); return json(res, await createEnvironment()); }
       if (route === 'GET /api/mentor') return json(res, await mentor.handle('state'));
       if (req.method === 'POST' && url.pathname.startsWith('/api/mentor/')) {
         const data = await body(req); const controller = new AbortController();
@@ -386,11 +481,14 @@ server = http.createServer(async (req, res) => {
         return json(res, { path: selected });
       }
       if (route === 'POST /api/workspace') {
-        if (currentRun && currentRun.phase !== 'finished') fail('请先停止正在运行的程序。', 409);
+        if (environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先等待环境操作完成或停止正在运行的程序。', 409);
+        workspacePending = true;
+        try {
         const data = await body(req); const root = await fs.realpath(data.path);
         if (!(await fs.stat(root)).isDirectory()) fail('请选择有效的文件夹。');
-        mentor.abortAll(); ROOT = root; config.workspace = root; await persist(); currentRun = null;
-        return json(res, { settings: publicConfig(), tree: await tree() });
+        mentor.abortAll(); ROOT = root; config.workspace = root; await persist(); currentRun = null; pythonEnvironmentCache = null;
+        return json(res, { settings: publicConfig(), ...await projectState(), tree: await tree() });
+        } finally { workspacePending = false; }
       }
       if (route === 'POST /api/settings') {
         const data = await body(req); const next = { ...config };
@@ -404,20 +502,41 @@ server = http.createServer(async (req, res) => {
         if (data.clearKey) next.encryptedKey = '';
         if (typeof data.key === 'string' && data.key.trim()) next.encryptedKey = await protectKey(data.key.trim());
         config = next; await persist(); toolsCache = null;
-        return json(res, { settings: publicConfig(), tools: await detectTools() });
+        pythonEnvironmentCache = null;
+        return json(res, { settings: publicConfig(), ...await projectState() });
       }
       if (route === 'POST /api/ai') return json(res, await aiRequest(await body(req)));
       if (route === 'POST /api/run') {
-        if (currentRun && currentRun.phase !== 'finished') fail('已有程序正在运行，请先停止。', 409);
+        if (environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('已有程序或环境操作正在运行，请先停止或等待完成。', 409);
+        runPending = true;
+        try {
         const data = await body(req); const file = await safePath(data.path);
         if (!(await fs.stat(file)).isFile()) fail('请选择代码文件。');
         const extension = path.extname(file).toLowerCase();
         const language = ({ '.py': 'python', '.c': 'c', '.cpp': 'cpp', '.cc': 'cpp', '.cxx': 'cpp', '.js': 'javascript', '.mjs': 'javascript' })[extension];
         if (!language) fail('当前文件不能运行。支持 .py、.c、.cpp、.cc、.cxx、.js、.mjs。');
         const args = parseArguments(data.args);
-        const run = { id: crypto.randomBytes(8).toString('hex'), path: data.path, sourceFingerprint: textFingerprint(await fs.readFile(file, 'utf8')), output: '', started: Date.now(), phase: language === 'c' || language === 'cpp' ? 'compile' : 'run', child: null, stopping: false, initialInput: String(data.input || '').slice(0, 100000) };
+        const project = await readProject(ROOT, safePath);
+        if (project.error) fail(project.error);
+        const configured = project.config.build[language];
+        const projectBuild = Array.isArray(configured) && configured.length > 0;
+        if (projectBuild && !configured.includes(data.path.replace(/\\/g, '/'))) fail('当前文件不在项目构建列表中，请在项目设置里加入它或清空列表使用单文件运行。');
+        const sources = [];
+        for (const sourcePath of projectBuild ? configured : [data.path]) {
+          const sourceFile = await safePath(sourcePath); const stat = await fs.stat(sourceFile);
+          if (!stat.isFile() || stat.size > 2 * 1024 * 1024) fail(`源文件不存在、不是文件或超过 2 MB：${sourcePath}`);
+          sources.push({ path: sourcePath, file: sourceFile, content: await fs.readFile(sourceFile, 'utf8') });
+        }
+        const includeDirs = [];
+        for (const folder of language === 'c' || language === 'cpp' ? project.config.build.includeDirs : []) {
+          const directory = await safePath(folder);
+          if (!(await fs.stat(directory)).isDirectory()) fail(`头文件路径不是目录：${folder}`);
+          includeDirs.push(directory);
+        }
+        const run = { id: crypto.randomBytes(8).toString('hex'), path: data.path, sourceFingerprint: textFingerprint(sources.find(source => source.file === file)?.content || await fs.readFile(file, 'utf8')), output: '', started: Date.now(), phase: language === 'c' || language === 'cpp' ? 'compile' : 'run', child: null, stopping: false, initialInput: String(data.input || '').slice(0, 100000), root: ROOT, projectBuild, sources, includeDirs, build: project.config.build, tools: await detectTools(project) };
         currentRun = run; emit('start', { id: run.id, path: data.path, sourceFingerprint: run.sourceFingerprint, phase: run.phase }); json(res, { id: run.id });
         void execute(run, file, data.path, language, args); return;
+        } finally { runPending = false; }
       }
       if (route === 'POST /api/input') {
         if (!currentRun?.child || currentRun.phase !== 'run') fail('程序当前没有等待输入的运行进程。');

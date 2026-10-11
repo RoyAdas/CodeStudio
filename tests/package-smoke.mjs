@@ -108,12 +108,12 @@ async function healthIsRunning() {
   } catch { return false; }
 }
 
-async function call(route, data) {
+async function call(route, data, timeout = 15000) {
   const response = await fetch(`${baseUrl}/api/${route}`, {
     method: data === undefined ? 'GET' : 'POST',
     headers: { 'X-Studio-Token': sessionToken, ...(data === undefined ? {} : { 'Content-Type': 'application/json' }) },
     body: data === undefined ? undefined : JSON.stringify(data),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(timeout),
   });
   const value = await response.json();
   assert.equal(response.status, 200, `Local API ${route} failed: ${value.error || response.status}`);
@@ -220,6 +220,31 @@ try {
     assert.match(run.output, /Hello, CodeStudio!/);
     assert.match(run.output, /Sum:\s*15/);
     check(`${tool} public example executes using the downloaded package`);
+  }
+
+  for (const [tool, folder, file, expected] of [['c', 'c-project', 'main.c', 'C project total: 42'], ['cpp', 'cpp-project', 'main.cpp', 'C++ project total: 42']]) {
+    if (!state.tools[tool].available) continue;
+    const switched = await call('workspace', { path: path.join(appRoot, 'workspace', folder) });
+    assert.equal(switched.project.exists, true);
+    assert.equal(switched.project.config.build[tool].length, 2);
+    const result = await call('run', { path: file }); let run;
+    await eventually(async () => { run = (await call('state')).run; return run?.id === result.id && run.phase === 'finished'; }, 40000);
+    assert.equal(run.code, 0, run.output); assert.ok(run.output.includes(expected), run.output);
+    const remaining = await fs.readdir(path.join(appRoot, 'workspace', folder));
+    assert.equal(remaining.some(name => name.startsWith('.studio-build-')), false);
+    check(`${tool} packaged multi-file example builds from its own project configuration`);
+  }
+  await call('workspace', { path: path.join(appRoot, 'workspace') });
+  if (state.tools.python.available) {
+    await call('project', { python: { mode: 'venv', venv: '.venv-package' } });
+    const environment = await call('project/venv', {}, 190000);
+    assert.equal(environment.tools.python.environment, 'venv'); assert.equal(environment.tools.python.available, true);
+    await call('new', { path: 'check_env.py', type: 'file' });
+    await call('files', { path: 'check_env.py', content: 'import sys\nprint("PACKAGED_ENV", sys.prefix != sys.base_prefix)\n' });
+    const result = await call('run', { path: 'check_env.py' }); let run;
+    await eventually(async () => { run = (await call('state')).run; return run?.id === result.id && run.phase === 'finished'; }, 40000);
+    assert.equal(run.code, 0, run.output); assert.match(run.output, /PACKAGED_ENV True/);
+    check('Packaged application creates and runs a Python environment under Chinese installation paths');
   }
 
   await stopOwnedPackage();

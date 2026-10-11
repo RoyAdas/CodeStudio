@@ -1,5 +1,23 @@
 # Changelog / 更新记录
 
+## v0.2.0 — 2026-10-11
+
+Project environments and builds / 项目环境与多文件构建。
+
+- Per-workspace `.codestudio.json` settings and a project settings UI.
+- Python auto/system/venv modes; create a new local virtual environment with bundled pip, without downloading dependencies or replacing existing directories.
+- Explicit C/C++ source lists, mixed C/C++ builds, header directories, and selectable language standards.
+- F5 saves all modified open files before execution. Empty build lists preserve single-file behavior.
+- Unicode source paths, original diagnostic filenames/lines, exclusive temporary files, and cleanup on success, errors, and cancellation.
+- Workspace-bound path validation, malformed-configuration errors, bilingual project guides, and two multi-file examples.
+- Regression coverage for project configuration, actual environment isolation, mixed-language linking, browser operations, and portable launchers.
+
+### Known limits / 已知限制
+
+- Windows x64, Chinese UI; install Python and GCC/Clang separately.
+- No language server, debugger, CMake, external-library link options, or incremental build. Basic completion and AI request behavior remain as in v0.1.0.
+- Virtual environments are local and must be recreated after moving projects or computers. Third-party packages are installed manually.
+
 ## v0.1.0 — 2026-10-10
 
 First public release / 首个公开版本。
@@ -20,6 +38,6 @@ First public release / 首个公开版本。
 - AI adapters are covered by local mocks. Real providers and models are not universally verified, and model reviews do not guarantee program correctness.
 - Automatic-review limits do not cap manual requests. Provider-reported token counts may be unavailable and do not represent a bill.
 
-Potential v0.2 work: Python virtual environments, semantic completion, multi-file builds, streaming AI responses, and Chinese/English interface switching.
+Future candidates: semantic completion, streaming AI responses, and Chinese/English interface switching.
 
-v0.2 候选方向：Python 虚拟环境、语义补全、多文件构建、AI 流式回复与界面中英切换。
+后续候选方向：语义补全、AI 流式回复与界面中英切换。

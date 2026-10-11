@@ -1,0 +1,4 @@
+{
+  "version": 1,
+  "build": { "cpp": ["main.cpp", "total.cpp"], "cppStandard": "c++17" }
+}

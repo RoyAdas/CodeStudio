@@ -20,8 +20,7 @@ const currentRef = await api(`${root}/git/ref/tags/${tag}`, {optional:true});
 let oldCommit;
 if (currentRef) {
   oldCommit = currentRef.object.type === 'tag' ? (await api(currentRef.object.url)).object.sha : currentRef.object.sha;
-  // Only the explicitly reviewed first v0.1.0 publication may be refreshed.
-  if (oldCommit !== commit && (tag !== 'v0.1.0' || oldCommit !== 'db83d68b5d3b0c6f502a006a96035915ce2bff67')) throw Error('An existing version points to unexpected source. Publish a new version instead.');
+  if (oldCommit !== commit) throw Error('An existing version points to different source. Publish a new version instead.');
 }
 let release = await api(`${root}/releases/tags/${tag}`, {optional:true});
 if (!release) {

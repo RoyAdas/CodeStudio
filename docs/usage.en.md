@@ -12,7 +12,7 @@ If port 8765 is occupied, the launcher chooses an available port between 8766 an
 
 The package includes Node. Install Python for Python programs and GCC/G++ or Clang/Clang++ for C/C++. Add tools to PATH, or enter full executable paths in “设置 → 运行环境” (Settings → Runtime) and save to repeat detection. Install project dependencies such as PyTorch in the Python environment you choose.
 
-One-click launch starts the workbench; it does not install every language or project dependency. v0.1.0 supports Windows x64 only.
+One-click launch starts the workbench; it does not install every language or project dependency. v0.2.0 supports Windows x64 only.
 
 ## Files and shortcuts
 
@@ -34,7 +34,7 @@ Unsaved changes are stored as local drafts in the current browser and can be res
 
 ## Run programs
 
-Supported extensions are `.py`, `.c`, `.cpp`, `.cc`, `.cxx`, `.js`, and `.mjs`. C/C++ compilation builds the current source file using C11/C++17. Headers in the same directory can be included, but multi-file project build tooling is not available.
+Supported extensions are `.py`, `.c`, `.cpp`, `.cc`, `.cxx`, `.js`, and `.mjs`. C/C++ defaults to single-file C11/C++17 compilation. Select multiple sources or a Python virtual environment in **项目设置 / Project Settings**. F5 saves every modified open file before execution. See [project environments and builds](project.en.md).
 
 The terminal shows actual output, errors, and exit codes. For standard input, type into the terminal input field and press Enter; EOF signals end of input. Quote run arguments containing spaces. “停止” (Stop) terminates the current program. The default execution limit is 120 seconds, adjustable to 10–600 seconds in settings; compilation is limited to 30 seconds.
 

@@ -33,7 +33,7 @@ export async function closeServer(server) {
 export async function createFixture({ files = {}, settings = {}, requireDist = false } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'code-studio-test-'));
   try {
-    for (const name of ['server.mjs', 'mentor.mjs', 'mentor-shared.mjs']) {
+    for (const name of ['server.mjs', 'mentor.mjs', 'mentor-shared.mjs', 'project.mjs']) {
       await fs.copyFile(path.join(projectRoot, name), path.join(root, name));
     }
     const dist = path.join(projectRoot, 'dist');

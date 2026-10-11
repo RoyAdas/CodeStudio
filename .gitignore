@@ -13,7 +13,9 @@ playwright-report/
 *.zip
 *.tmp
 .code-studio-build/
+.studio-build-*
 .venv/
+venv/
 __pycache__/
 .DS_Store
 Thumbs.db

@@ -39,7 +39,7 @@ async function powershell(script, environment) {
 try {
   await fs.mkdir(path.join(app, 'runtime'), { recursive: true });
   // A fixed allowlist keeps local settings, private workspaces and logs out of releases.
-  for (const name of ['dist', 'docs', 'licenses', 'examples', 'server.mjs', 'mentor.mjs', 'mentor-shared.mjs', 'Start.cmd', 'Stop.cmd', '启动工作台.cmd', '停止工作台.cmd', 'launch.ps1', 'README.md', 'README.en.md', 'CONTRIBUTING.md', 'LICENSE', 'CHANGELOG.md', 'runtime-version.json']) {
+  for (const name of ['dist', 'docs', 'licenses', 'examples', 'server.mjs', 'mentor.mjs', 'mentor-shared.mjs', 'project.mjs', 'Start.cmd', 'Stop.cmd', '启动工作台.cmd', '停止工作台.cmd', 'launch.ps1', 'README.md', 'README.en.md', 'CONTRIBUTING.md', 'LICENSE', 'CHANGELOG.md', 'runtime-version.json']) {
     await fs.cp(path.join(root, name), path.join(app, name), { recursive: true });
   }
   await fs.cp(path.join(root, 'examples'), path.join(app, 'workspace'), { recursive: true });

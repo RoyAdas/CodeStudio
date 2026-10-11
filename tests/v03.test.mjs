@@ -62,7 +62,9 @@ test('stream API retries only explicit unsupported-stream rejection and supports
 });
 test('Windows backup restores encrypted API settings, locale and mentor progress without editing code', { skip: process.platform !== 'win32' }, async t => {
   const fixture = await createFixture({ files: { 'main.py': 'print(42)\n' } }); t.after(() => fixture.cleanup());
-  const key = crypto.createHash('sha256').update(path.join(fixture.root, 'workspace').toLowerCase()).digest('hex');
+  // Windows runner TEMP may use an 8.3 alias; match the server's canonical workspace.
+  const workspace = await fs.realpath(path.join(fixture.root, 'workspace'));
+  const key = crypto.createHash('sha256').update(workspace.toLowerCase()).digest('hex');
   const savedTask = { id: 'saved-task', title: 'Preserved task', task: 'Learn sums', steps: [{ id: 'step-1', title: 'Sum', goal: 'Sum values', hint: 'Accumulate', acceptance: 'Correct sum', completed: false }], currentStep: 0, status: 'paused', options: { autoMode: 'manual', minInterval: 20000, idleDelay: 5000, maxAutoChecksPerHour: 30 }, metrics: { requests: 2, reportedTokens: 12, usageResponses: 1 }, history: [], automaticRequests: [], revision: 1 };
   await fs.writeFile(path.join(fixture.root, 'data/mentor-sessions.json'), JSON.stringify({ version: 1, sessions: { [key]: savedTask } })); await fixture.start();
   assert.equal((await fixture.call('settings', { baseUrl: 'http://127.0.0.1:9', key: 'test-only-key', locale: 'en' })).status, 200);

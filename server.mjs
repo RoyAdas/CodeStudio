@@ -286,6 +286,7 @@ async function spawnRun(run, executable, args, cwd, phase) {
 async function execute(run, file, relative, language, args) {
   let code = -1;
   const temporaryFiles = [];
+  const temporaryDirectories = [];
   try {
     const available = run.tools;
     const tool = available[language];
@@ -317,7 +318,17 @@ async function execute(run, file, relative, language, args) {
         const objectName = `.studio-build-${run.id}-${index}.o`;
         const object = path.join(directory, objectName);
         const objectHandle = await fs.open(object, 'wx'); temporaryFiles.push(object); await objectHandle.close();
-        const includes = run.includeDirs.flatMap(folder => ['-I', path.relative(directory, folder) || '.']);
+        const includes = [];
+        for (const [includeIndex, folder] of run.includeDirs.entries()) {
+          // MinGW drivers may also corrupt non-ASCII -I arguments before
+          // invoking their assembler. Junctions keep every argument ASCII,
+          // and leave headers in place (including their relative includes).
+          const aliasName = `.studio-build-${run.id}-${index}-include-${includeIndex}`;
+          const alias = path.join(directory, aliasName);
+          await fs.symlink(folder, alias, process.platform === 'win32' ? 'junction' : 'dir');
+          temporaryDirectories.push(alias);
+          includes.push(`-I${aliasName}`);
+        }
         emit('output', { text: `编译 ${unit.path} …\n`, channel: 'system' });
         const compilation = await spawnRun(run, compiler.path, ['-c', sourceName, '-o', objectName, `-std=${sourceLanguage === 'c' ? run.build.cStandard : run.build.cppStandard}`, '-Wall', '-Wextra', '-g', '-fdiagnostics-color=never', ...includes], directory, 'compile');
         emit('diagnostics', { path: unit.path, markers: diagnostics(compilation.captured.split(sourceName).join(unit.file), unit.path) });
@@ -344,6 +355,11 @@ async function execute(run, file, relative, language, args) {
     // pre-existing file when a collision or a partial setup failure occurs.
     for (const temporary of temporaryFiles) {
       try { await fs.unlink(temporary); } catch (e) { if (e.code !== 'ENOENT') emit('output', { text: '临时编译文件清理失败，请关闭占用文件的程序后重试。\n', channel: 'system' }); }
+    }
+    for (const temporary of temporaryDirectories) {
+      // Remove only our junction itself, never the directory it points to.
+      try { if (process.platform === 'win32') await fs.rmdir(temporary); else await fs.unlink(temporary); }
+      catch (e) { if (e.code !== 'ENOENT') emit('output', { text: '临时头文件链接清理失败，请手动移除 .studio-build- 开头的链接。\n', channel: 'system' }); }
     }
     run.child = null; run.code = code; run.phase = 'finished';
     emit('finish', { id: run.id, code, stopped: run.stopping, duration: Date.now() - run.started });

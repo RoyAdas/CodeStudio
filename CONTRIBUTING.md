@@ -8,6 +8,7 @@ Use Windows x64 and a Node.js version matching `package.json`'s `engines`. From 
 
 ```sh
 npm ci
+npm run prepare:languages
 npm run build
 npm start
 ```

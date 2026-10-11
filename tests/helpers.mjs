@@ -30,11 +30,16 @@ export async function closeServer(server) {
   await new Promise(resolve => server.close(resolve));
 }
 
-export async function createFixture({ files = {}, settings = {}, requireDist = false } = {}) {
+export async function createFixture({ files = {}, settings = {}, requireDist = false, requireLanguages = false } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'code-studio-test-'));
   try {
-    for (const name of ['server.mjs', 'mentor.mjs', 'mentor-shared.mjs', 'project.mjs']) {
+    for (const name of ['server.mjs', 'mentor.mjs', 'mentor-shared.mjs', 'project.mjs', 'ai-stream.mjs', 'backup.mjs', 'language-service.mjs']) {
       await fs.copyFile(path.join(projectRoot, name), path.join(root, name));
+    }
+    if (requireLanguages) {
+      await fs.mkdir(path.join(root, 'node_modules'));
+      await fs.symlink(path.join(projectRoot, 'node_modules/pyright'), path.join(root, 'node_modules/pyright'), process.platform === 'win32' ? 'junction' : 'dir');
+      await fs.symlink(path.join(projectRoot, 'language-runtime'), path.join(root, 'language-runtime'), process.platform === 'win32' ? 'junction' : 'dir');
     }
     const dist = path.join(projectRoot, 'dist');
     try {
@@ -111,7 +116,7 @@ export async function createFixture({ files = {}, settings = {}, requireDist = f
       // This path is always the freshly created, absolute temporary fixture.
       await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
-    return { root, start, call, cleanup, get base() { return base; }, get log() { return serviceLog; } };
+    return { root, start, call, cleanup, get base() { return base; }, get token() { return token; }, get log() { return serviceLog; } };
   } catch (error) {
     await fs.rm(root, { recursive: true, force: true });
     throw error;

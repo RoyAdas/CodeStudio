@@ -12,7 +12,7 @@ If port 8765 is occupied, the launcher chooses an available port between 8766 an
 
 The package includes Node. Install Python for Python programs and GCC/G++ or Clang/Clang++ for C/C++. Add tools to PATH, or enter full executable paths in “设置 → 运行环境” (Settings → Runtime) and save to repeat detection. Install project dependencies such as PyTorch in the Python environment you choose.
 
-One-click launch starts the workbench; it does not install every language or project dependency. v0.2.0 supports Windows x64 only.
+One-click launch starts the workbench; it does not install every language or project dependency. v0.3.0 supports Windows x64 only.
 
 ## Files and shortcuts
 
@@ -28,7 +28,7 @@ Use “打开文件夹” (Open Folder) at the bottom left to enter your project
 | Find in file | Ctrl + F |
 | Undo edits or AI insertion | Ctrl + Z |
 
-Ordinary completion provides Python/C/C++ keywords, snippets, and current-file identifiers without an API. Select with arrow keys, confirm with Enter or Tab, and use Tab to move through snippet placeholders. Full language-server type and member analysis is not included.
+Local Pyright/clangd provide type and member completion, signature help, hover information, F12 workspace definitions and live diagnostics without an API. Keywords and snippets remain available. Select with arrow keys, confirm with Enter or Tab, and use Tab to move through snippet placeholders.
 
 Unsaved changes are stored as local drafts in the current browser and can be restored after refresh. Ctrl+S writes to disk, and running also saves the current file. Drafts are not backups; clearing browser data may delete them.
 
@@ -64,3 +64,6 @@ AI completion previews suggestions before insertion; Ctrl+Z undoes them. The ord
 - Updating the installation: stop the server first and back up the selected workspace and local configuration you wish to retain. Encrypted keys only work on the original computer and Windows account.
 
 `data/` contains settings, mentor progress, and logs. Code lives in your selected workspace, which may be outside the installation directory. Confirm that path before backing up your code, and stop the server before moving the installation folder.
+
+
+See the [editor and upgrade guide](editor.en.md) for v0.3 semantic completion, hint levels, streaming and backups.

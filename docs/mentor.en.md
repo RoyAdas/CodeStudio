@@ -53,3 +53,6 @@ Feedback distinguishes static code review from code plus execution results. The 
 The route, current step, and recent feedback are stored locally in `data/mentor-sessions.json` and restored after refresh or restart. Each workspace has its own task; paused status persists. This file may contain private goals and code feedback, so do not commit it.
 
 “新任务” (New task) asks before ending the current task. Confirming clears its progress without deleting code. Back up important code and learning records separately.
+
+
+See the [editor and upgrade guide](editor.en.md) for v0.3 semantic completion, hint levels, streaming and backups.

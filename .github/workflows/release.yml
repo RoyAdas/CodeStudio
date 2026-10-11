@@ -22,6 +22,7 @@ jobs:
           node-version: 24.21.0
           cache: npm
       - run: npm ci
+      - run: npm run prepare:languages
       - run: npm run typecheck
       - run: npm run build
       - run: npm test

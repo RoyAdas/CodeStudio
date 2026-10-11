@@ -39,6 +39,21 @@ test('fingerprints distinguish equal-length edits and remain stable after normal
   assert.equal(contextFingerprint(twoFiles), contextFingerprint({ ...twoFiles, files: [...twoFiles.files].reverse() }));
 });
 
+test('learner-selected hint depth is persisted; automatic checks always use light hints', async t => {
+  const fixture = await controllerFixture(t); await fixture.start();
+  for (const [level, phrase] of [['hint', '轻提示'], ['approach', '详细思路'], ['example', '短代码示例']]) {
+    const result = await fixture.controller.handle('check', { trigger: 'manual', hintLevel: level, context });
+    assert.equal(result.session.review.hintLevel, level); assert.ok(fixture.calls.at(-1).system.includes(phrase));
+  }
+  const changed = { ...context, files: [{ path: 'main.py', code: code + '# changed\n' }] };
+  const result = await fixture.controller.handle('check', { trigger: 'run', hintLevel: 'example', context: changed });
+  // The automatic cooldown may skip the check; advance time through the stored
+  // session only for this fixture to exercise the actual automatic prompt.
+  if (result.skipped) { result.session.lastCheckAt = 0; await fixture.controller.handle('check', { trigger: 'run', hintLevel: 'example', context: changed }); }
+  assert.ok(fixture.calls.at(-1).system.includes('本次只给一条轻提示'));
+  assert.ok(!fixture.calls.at(-1).system.includes('学习者明确请求示例'));
+});
+
 test('long file excerpts preserve full-source identity and reject old run evidence', () => {
   const original = 'x=1\n' + '# context\n'.repeat(2200);
   const snapshot = { activePath: 'large.py', files: [{ path: 'large.py', code: original }], run: { id: 'run-1', path: 'large.py', phase: 'finished', code: 0, sourceFingerprint: textFingerprint(original), output: 'ok' } };

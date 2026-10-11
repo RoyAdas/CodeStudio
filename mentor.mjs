@@ -94,6 +94,8 @@ export function createMentorController({ dataDir, getWorkspace, askAI, broadcast
     }
     if (action !== 'check') problem('导师操作不存在。', 404);
     const trigger = ['idle', 'run', 'manual', 'question'].includes(input.trigger) ? input.trigger : 'manual'; const automatic = trigger === 'idle' || trigger === 'run';
+    const hintLevel = !automatic && ['hint', 'approach', 'example'].includes(input.hintLevel) ? input.hintLevel : 'hint';
+    const hintInstruction = { hint: '本次只给一条轻提示，不给代码答案。', approach: '学习者请求详细思路：逐点解释当前步骤的做法和原因，可给伪代码，不给整份实现。', example: '学习者明确请求示例：只给当前步骤的短代码示例并解释，仍不要代写整个任务。示例代码放在 hint 字段的 Markdown 代码块内。' }[hintLevel];
     if (jobs.has(key)) return { session, skipped: true, reason: 'busy' };
     if (session.status === 'completed' || (automatic && session.status !== 'active')) return { session, skipped: true, reason: 'inactive' };
     if (automatic && (session.options.autoMode === 'manual' || (trigger === 'idle' && session.options.autoMode !== 'idle'))) return { session, skipped: true, reason: 'disabled' };
@@ -114,13 +116,13 @@ export function createMentorController({ dataDir, getWorkspace, askAI, broadcast
       session.metrics ||= { requests: 0, reportedTokens: 0, usageResponses: 0 }; session.metrics.requests++;
       if (automatic) session.automaticRequests.push(Date.now()); await save();
       if (!stillCurrent(key, job)) return { session: sessions.get(key) || null, canceled: true };
-      const result = await askAI({ system: `${role}\n只检查当前步骤，不重新规划，也不提前教后续步骤。JSON 格式：{"status":"in_progress|needs_fix|passed","note":"简短判断及依据","hint":"接下来给学习者的一条提示，不直接给完整代码","evidence":[{"path":"传入的文件路径","line":1,"message":"具体观察"}]}。passed 必须满足本步骤 acceptance；没有运行证据时明确标注只做静态检查。已存在代码中的 TODO 或不足应给具体提示。evidence 只引用快照中的文件与有效行号，最多 3 条。用户提问时回答问题，但不要虚报完成。`, messages: [{ role: 'user', content: `总任务：${session.task}\n学习基础：${session.level}\n当前步骤 ${step + 1}/${session.steps.length}：${JSON.stringify(session.steps[step])}\n此前反馈：${JSON.stringify(session.review || null)}\n检查触发：${trigger}\n学习者问题：${text(input.question, 3000) || '请判断这一步的进度，并提示下一件小事。'}\n当前快照：${JSON.stringify(context)}` }], signal: job.controller.signal, maxTokens: 1800 });
+      const result = await askAI({ system: `${role}\n只检查当前步骤，不重新规划，也不提前教后续步骤。JSON 格式：{"status":"in_progress|needs_fix|passed","note":"简短判断及依据","hint":"接下来给学习者的一条提示，不直接给完整代码","evidence":[{"path":"传入的文件路径","line":1,"message":"具体观察"}]}。passed 必须满足本步骤 acceptance；没有运行证据时明确标注只做静态检查。已存在代码中的 TODO 或不足应给具体提示。evidence 只引用快照中的文件与有效行号，最多 3 条。用户提问时回答问题，但不要虚报完成。\n${hintInstruction}`, messages: [{ role: 'user', content: `总任务：${session.task}\n学习基础：${session.level}\n当前步骤 ${step + 1}/${session.steps.length}：${JSON.stringify(session.steps[step])}\n此前反馈：${JSON.stringify(session.review || null)}\n检查触发：${trigger}\n学习者问题：${text(input.question, 3000) || '请判断这一步的进度，并提示下一件小事。'}\n当前快照：${JSON.stringify(context)}` }], signal: job.controller.signal, maxTokens: 1800 });
       if (!stillCurrent(key, job) || session.revision !== revision) return { session, canceled: true };
       recordUsage(session, result.usage);
       const review = extractJSON(result.text);
       if (!['in_progress', 'needs_fix', 'passed'].includes(review.status) || !text(review.note)) problem('导师返回的检查结果格式不完整，请手动重试。', 502);
       const evidence = (Array.isArray(review.evidence) ? review.evidence : []).slice(0, 3).filter(item => context.files.some(file => file.path === item.path && Number.isInteger(item.line) && item.line > 0 && item.line <= file.code.split('\n').length)).map(item => ({ path: item.path, line: item.line, message: text(item.message, 1000) })).filter(item => item.message);
-      session.review = { status: review.status, note: text(review.note, 2500), hint: text(review.hint, 2000), evidence, trigger, step, time: Date.now(), contextFingerprint: fingerprint, runEvidence: !!context.run?.matchesCurrentCode && context.run?.phase === 'finished', question: text(input.question, 3000) };
+      session.review = { status: review.status, note: text(review.note, 2500), hint: text(review.hint, 6000), hintLevel, evidence, trigger, step, time: Date.now(), contextFingerprint: fingerprint, runEvidence: !!context.run?.matchesCurrentCode && context.run?.phase === 'finished', question: text(input.question, 3000) };
       if (automatic) session.autoChecks++; session.lastError = ''; session.updatedAt = Date.now();
       history(session, 'check', session.review.note, trigger); await save(); publish(root, session); return { session };
     } catch (error) {
@@ -129,5 +131,11 @@ export function createMentorController({ dataDir, getWorkspace, askAI, broadcast
       history(session, 'error', session.lastError, trigger); await save(); publish(root, session); throw error;
     } finally { job.dispose(); if (jobs.get(key) === job) { jobs.delete(key); publish(root, sessions.get(key) || null); } }
   }
-  return { handle, abortAll() { for (const key of jobs.keys()) cancel(key); } };
+  function validateStored(stored) {
+    if (stored?.version !== 1 || !stored.sessions || typeof stored.sessions !== 'object' || Array.isArray(stored.sessions) || Object.keys(stored.sessions).length > 500) problem('备份中的导师进度格式不正确。');
+    for (const [key, session] of Object.entries(stored.sessions)) {
+      if (!/^[a-f0-9]{64}$/.test(key) || !session || !Array.isArray(session.steps) || !session.steps.length || session.steps.length > 10 || !Number.isInteger(session.currentStep) || session.currentStep < 0 || session.currentStep >= session.steps.length || !['active', 'paused', 'completed'].includes(session.status) || !session.options) problem('备份中的导师任务不完整。');
+    }
+  }
+  return { handle, validateStored, flush: () => writeQueue, async replaceStored(stored) { validateStored(stored); for (const key of jobs.keys()) cancel(key); await writeQueue; sessions.clear(); for (const [key, session] of Object.entries(stored.sessions)) sessions.set(key, session); initialized = true; await save(); }, abortAll() { for (const key of jobs.keys()) cancel(key); } };
 }

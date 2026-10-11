@@ -76,7 +76,8 @@ async function listFiles(root, relative = '') {
     const name = relative ? `${relative}/${entry.name}` : entry.name;
     assert.equal(entry.isSymbolicLink(), false, `Unexpected symbolic link in package: ${name}`);
     if (entry.isDirectory()) {
-      assert.equal(/^(data|backups|node_modules|\.git)$/i.test(entry.name), false, `Private or development directory in package: ${name}`);
+      const publicTypeStubs = name.startsWith('node_modules/pyright/dist/typeshed-fallback/');
+      assert.equal(/^(data|backups|\.git)$/i.test(entry.name) && !(publicTypeStubs && entry.name === 'data'), false, `Private or development directory in package: ${name}`);
       result.push(...await listFiles(root, name));
     }
     else { assert.ok(entry.isFile(), `Unexpected package entry: ${name}`); result.push(name); }
@@ -145,12 +146,12 @@ try {
   assert.deepEqual(await fs.readdir(unpackRoot), ['CodeStudio']);
   const rootEntries = await fs.readdir(appRoot);
   assert.equal(rootEntries.includes('data'), false, 'Release must not ship local data.');
-  assert.equal(rootEntries.includes('node_modules'), false);
+  assert.deepEqual(await fs.readdir(path.join(appRoot, 'node_modules')), ['pyright']);
   assert.equal(rootEntries.includes('.git'), false);
   const packagedFiles = await listFiles(appRoot);
-  assert.equal(packagedFiles.some(name => /(^|\/)(data|backups|node_modules|\.git)(\/|$)/i.test(name)), false, 'Release must exclude personal data, backups and development dependencies.');
+  assert.equal(packagedFiles.filter(name => !name.startsWith('node_modules/pyright/dist/typeshed-fallback/')).some(name => /(^|\/)(data|backups|\.git)(\/|$)/i.test(name)), false, 'Release must exclude personal data, backups and development dependencies.');
   assert.equal(packagedFiles.some(name => /(^|\/)(settings\.json|running\.json|mentor-sessions\.json)$|\.log$/i.test(name)), false, 'Release must exclude settings and logs.');
-  for (const name of ['Start.cmd', 'Stop.cmd', '启动工作台.cmd', '停止工作台.cmd', 'launch.ps1', 'dist/index.html', 'README.md', 'README.en.md', 'LICENSE', 'licenses/Node-LICENSE.txt']) assert.ok(packagedFiles.includes(name), `Required package file is missing: ${name}`);
+  for (const name of ['Start.cmd', 'Stop.cmd', '启动工作台.cmd', '停止工作台.cmd', 'launch.ps1', 'dist/index.html', 'README.md', 'README.en.md', 'LICENSE', 'licenses/Node-LICENSE.txt', 'node_modules/pyright/LICENSE.txt', 'language-runtime/clangd/bin/clangd.exe', 'language-service.mjs']) assert.ok(packagedFiles.includes(name), `Required package file is missing: ${name}`);
   const exampleFiles = await listFiles(path.join(projectRoot, 'examples'));
   const workspaceFiles = await listFiles(path.join(appRoot, 'workspace'));
   assert.deepEqual(workspaceFiles, exampleFiles, 'Packaged workspace must contain only public examples.');
@@ -246,6 +247,30 @@ try {
     assert.equal(run.code, 0, run.output); assert.match(run.output, /PACKAGED_ENV True/);
     check('Packaged application creates and runs a Python environment under Chinese installation paths');
   }
+
+  // Verify bundled services under this Chinese installation path, with no
+  // development dependency tree or outbound AI service.
+  const languageFiles = [
+    { path: 'package_language.py', content: 'items: list[str] = []\nitems.\n', version: 1 },
+    { path: 'package_language.c', content: 'struct Item { int score; };\nint main(void){struct Item item; item.;}\n', version: 1 },
+    { path: 'package_language.cpp', content: 'struct Widget { int score; void hello(); };\nint main(){Widget widget; widget.;}\n', version: 1 },
+  ];
+  for (const file of languageFiles) { await call('new', { path: file.path, type: 'file' }); await call('files', { path: file.path, content: file.content }); }
+  const synchronized = await call('language/sync', { files: languageFiles }, 30000);
+  assert.equal(synchronized.services.python.available, true); assert.equal(synchronized.services.cpp.available, true);
+  async function member(file, character, label) {
+    await eventually(async () => { const value = await call('language/query', { path: file, method: 'textDocument/completion', version: 1, position: { line: 1, character } }); return (value.result?.items || value.result || []).some(item => item.label.includes(label)); }, 25000);
+  }
+  await member('package_language.py', 6, 'append');
+  check('Bundled Pyright provides offline Python member completion under a Chinese installation path');
+  await member('package_language.c', languageFiles[1].content.split('\n')[1].indexOf('item.') + 5, 'score');
+  await member('package_language.cpp', languageFiles[2].content.split('\n')[1].indexOf('widget.') + 7, 'hello');
+  check('Bundled clangd provides offline C and C++ member completion under a Chinese installation path');
+  await call('settings', { locale: 'en' }); const backup = await call('backups/export', {});
+  assert.ok(backup.backup.encryptedData); assert.equal(backup.backup.settings, undefined);
+  await call('settings', { locale: 'zh-CN' }); await call('backups/import', { backup: backup.backup });
+  assert.equal((await call('state')).settings.locale, 'en');
+  check('Packaged encrypted backup restores interface settings with a recovery snapshot');
 
   await stopOwnedPackage();
   await eventually(async () => { try { await fs.access(stateFile); return false; } catch (error) { if (error.code === 'ENOENT') return true; throw error; } });

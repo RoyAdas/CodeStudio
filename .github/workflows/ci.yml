@@ -18,6 +18,8 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Prepare bundled language services
+        run: npm run prepare:languages
       - name: Check types
         run: npm run typecheck
       - name: Build editor

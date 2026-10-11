@@ -1,4 +1,16 @@
-# Changelog / 更新记录
+# Changelog
+
+## 0.3.0 — 2026-10-11
+
+- Add bundled Pyright/clangd semantic completion, signature help, hover, workspace definitions and unsaved-file diagnostics.
+- Stream AI chat with cancellation, retry and provider compatibility handling.
+- Add manual light/approach/example mentor hint levels and clickable problem explanations.
+- Add DPAPI-encrypted backups, automatic upgrade/restore snapshots and legacy-folder migration.
+- Add persistent Chinese/English UI switching.
+- Update Vite and DOMPurify security fixes.
+
+中文：新增本地智能补全、流式 AI、分级导师提示、加密备份与迁移，以及中英文界面。
+ / 更新记录
 
 ## v0.2.0 — 2026-10-11
 

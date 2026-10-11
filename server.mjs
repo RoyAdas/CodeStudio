@@ -8,6 +8,9 @@ import { StringDecoder } from 'node:string_decoder';
 import { createMentorController } from './mentor.mjs';
 import { textFingerprint } from './mentor-shared.mjs';
 import { PROJECT_FILE, normalizeProject, readProject } from './project.mjs';
+import { readAIStream } from './ai-stream.mjs';
+import { createBackupStore } from './backup.mjs';
+import { createLanguageService } from './language-service.mjs';
 
 const HOME = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(HOME, 'data');
@@ -42,7 +45,9 @@ if (process.argv.includes('--stop')) {
   process.exit(0);
 }
 
-const defaults = { workspace: DEFAULT_WORKSPACE, provider: 'custom', protocol: 'chat', baseUrl: '', model: '', encryptedKey: '', tools: { python: '', c: '', cpp: '' }, timeout: 120, anonymous: false };
+const defaults = { workspace: DEFAULT_WORKSPACE, provider: 'custom', protocol: 'chat', baseUrl: '', model: '', encryptedKey: '', tools: { python: '', c: '', cpp: '' }, timeout: 120, anonymous: false, locale: 'zh-CN', streaming: true };
+const VERSION = '0.3.0';
+const aiJobs = new Set();
 let config;
 try { config = { ...defaults, ...JSON.parse(await fs.readFile(CONFIG_FILE, 'utf8')) }; }
 catch (e) { if (e.code !== 'ENOENT') throw Error('设置文件损坏，请将 data/settings.json 改名后重试。'); config = defaults; }
@@ -58,7 +63,7 @@ function cleanError(value, secret = '') {
 function fail(message, status = 400) { const e = Error(message); e.status = status; throw e; }
 async function persist() {
   const temp = `${CONFIG_FILE}.tmp`;
-  await fs.writeFile(temp, JSON.stringify(config, null, 2), { mode: 0o600 });
+  await fs.writeFile(temp, JSON.stringify({ ...config, appVersion: VERSION }, null, 2), { mode: 0o600 });
   await fs.rename(temp, CONFIG_FILE);
 }
 function publicConfig() { const { encryptedKey, ...rest } = config; return { ...rest, workspace: ROOT, hasKey: !!encryptedKey }; }
@@ -66,9 +71,9 @@ function json(res, data, status = 200) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(data));
 }
-async function body(req) {
+async function body(req, limit = 2 * 1024 * 1024) {
   const chunks = []; let size = 0;
-  for await (const chunk of req) { size += chunk.length; if (size > 2 * 1024 * 1024) fail('内容太大（最多 2 MB）。', 413); chunks.push(chunk); }
+  for await (const chunk of req) { size += chunk.length; if (size > limit) fail('请求内容太大。', 413); chunks.push(chunk); }
   const text = Buffer.concat(chunks).toString('utf8');
   try { return JSON.parse(text || '{}'); } catch { fail('请求格式不正确。'); }
 }
@@ -394,6 +399,7 @@ async function aiRequest(data, overrides = {}) {
     if (!messages.length) fail('没有有效问题。');
   }
   if (overrides.system) system = overrides.system;
+  system += apiConfig.locale === 'en' ? '\nRespond in English. JSON field names must remain unchanged.' : '\n请用简洁中文回复，JSON 字段名保持不变。';
   if (overrides.messages) messages = overrides.messages;
   const maxTokens = overrides.maxTokens || (test ? 64 : complete ? 1024 : 3072);
   const headers = { 'Content-Type': 'application/json' };
@@ -410,9 +416,24 @@ async function aiRequest(data, overrides = {}) {
     request = { model: apiConfig.model, messages: [{ role: 'system', content: system }, ...messages], max_tokens: maxTokens, stream: false };
     if (apiConfig.provider === 'deepseek') request.thinking = { type: 'disabled' };
   }
+  request.stream = !!overrides.onDelta && apiConfig.streaming !== false;
+  const signal = overrides.signal ? AbortSignal.any([AbortSignal.timeout(90000), overrides.signal]) : AbortSignal.timeout(90000);
   let response;
-  try { response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(request), redirect: 'manual', signal: overrides.signal ? AbortSignal.any([AbortSignal.timeout(90000), overrides.signal]) : AbortSignal.timeout(90000) }); }
+  try { response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(request), redirect: 'manual', signal }); }
   catch (e) { if (overrides.signal?.aborted) throw e; fail(`无法连接 API：${cleanError(e, secret)}。请检查地址、网络与服务可用性。`, 502); }
+  // Retry only an explicit rejection of the stream parameter. A server failure,
+  // partial stream or broken connection must not silently create another bill.
+  if (request.stream && !response.ok && [400, 422, 501].includes(response.status)) {
+    const rejected = await response.clone().text();
+    if (/stream/i.test(rejected) && /not.support|unsupported|invalid|unknown|unrecognized/i.test(rejected)) {
+      await response.body?.cancel(); request.stream = false;
+      response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(request), redirect: 'manual', signal });
+    }
+  }
+  if (response.ok && overrides.onDelta) {
+    try { return { ...await readAIStream(response, apiConfig.protocol, overrides.onDelta, signal), model: apiConfig.model }; }
+    catch (error) { if (signal.aborted) throw error; fail(cleanError(error, secret), 502); }
+  }
   const raw = await response.text();
   let result; try { result = JSON.parse(raw); } catch { fail(`API 返回了非 JSON 内容（HTTP ${response.status}）。请检查地址是否为 API 接口。`, 502); }
   if (!response.ok) {
@@ -429,8 +450,14 @@ async function aiRequest(data, overrides = {}) {
   return { text: content, model: apiConfig.model, usage: result.usage || null };
 }
 const mentor = createMentorController({ dataDir: DATA, getWorkspace: () => ROOT, broadcast: emit, askAI: ({ system, messages, signal, maxTokens }) => aiRequest({ kind: 'mentor', messages }, { system, messages, signal, maxTokens }) });
+const languages = createLanguageService({ home: HOME, dataDir: DATA, getWorkspace: () => ROOT, safePath, projectState, broadcast: emit });
+const backups = createBackupStore({ dataDir: DATA, version: VERSION, protect: protectKey });
+// Backup errors are visible in settings, while local editing can still start.
+let backupError = '';
+try { await backups.beforeUpgrade(); } catch (error) { backupError = cleanError(error); }
 async function shutdown() {
   mentor.abortAll();
+  languages.reset(); for (const controller of aiJobs) controller.abort();
   if (environmentJob?.child) await killChild(environmentJob.child);
   if (currentRun?.child) { currentRun.stopping = true; await killChild(currentRun.child); }
   try { const s = JSON.parse(await fs.readFile(STATE_FILE, 'utf8')); if (s.pid === process.pid) await fs.unlink(STATE_FILE); } catch {}
@@ -451,6 +478,56 @@ server = http.createServer(async (req, res) => {
       const token = req.headers['x-studio-token'] || (url.pathname === '/api/events' ? url.searchParams.get('token') : '');
       if (token !== SESSION) fail('会话已更新，请刷新页面。', 403);
       const route = `${req.method} ${url.pathname}`;
+      if (route === 'GET /api/backups') return json(res, { backups: await backups.list(), error: backupError });
+      if (route === 'POST /api/backups/export') { await body(req); await mentor.flush(); return json(res, await backups.capture('manual')); }
+      if (route === 'POST /api/backups/import' || route === 'POST /api/backups/migrate') {
+        if (environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先停止程序，再恢复备份。', 409);
+        const data = await body(req, 16_000_000);
+        let files;
+        if (route.endsWith('/migrate')) {
+          if (typeof data.path !== 'string' || !data.path.trim()) fail('请选择旧版本工作台文件夹。');
+          const oldHome = await fs.realpath(data.path); const oldData = await fs.realpath(path.join(oldHome, 'data'));
+          const relativeData = path.relative(oldHome, oldData); if (relativeData !== 'data') fail('旧版本 data 目录不能链接到其他位置。');
+          files = {};
+          for (const name of ['settings.json', 'mentor-sessions.json']) {
+            try {
+              const file = await fs.realpath(path.join(oldData, name)); if (path.dirname(file) !== oldData) fail('旧设置文件不能链接到其他位置。');
+              const stat = await fs.stat(file); if (!stat.isFile() || stat.size > 6_000_000) fail('旧设置文件过大或无效。');
+              files[name] = await fs.readFile(file, 'utf8');
+            } catch (error) { if (error.code !== 'ENOENT' || name === 'settings.json') throw error; }
+          }
+        } else {
+          const envelope = data.name ? await backups.load(data.name) : data.backup;
+          files = await backups.decode(envelope);
+        }
+        const restored = JSON.parse(files['settings.json']);
+        if (!restored || typeof restored !== 'object' || Array.isArray(restored)) fail('备份中的设置格式不正确。');
+        if (restored.baseUrl) endpoint(restored.baseUrl, restored.protocol);
+        if (!['chat', 'responses', 'anthropic'].includes(restored.protocol)) fail('备份中的接口协议不支持。');
+        if (restored.encryptedKey) await protectKey(restored.encryptedKey, true);
+        const sessions = files['mentor-sessions.json'] ? JSON.parse(files['mentor-sessions.json']) : { version: 1, sessions: {} };
+        mentor.validateStored(sessions);
+        let restoredRoot; try { restoredRoot = await fs.realpath(restored.workspace); if (!(await fs.stat(restoredRoot)).isDirectory()) throw Error(); } catch { fail('备份中的工作区不存在，请先恢复原工作区文件夹。'); }
+        await mentor.flush(); const rollback = await backups.capture('before-restore');
+        const oldConfig = config; const oldRoot = ROOT;
+        mentor.abortAll(); languages.reset(); for (const controller of aiJobs) controller.abort();
+        try {
+          config = { ...defaults, ...restored, locale: restored.locale === 'en' ? 'en' : 'zh-CN' }; ROOT = restoredRoot;
+          await persist(); await mentor.replaceStored(sessions);
+        } catch (error) {
+          config = oldConfig; ROOT = oldRoot; await persist();
+          const previous = await backups.decode(rollback.backup);
+          await mentor.replaceStored(previous['mentor-sessions.json'] ? JSON.parse(previous['mentor-sessions.json']) : { version: 1, sessions: {} });
+          throw error;
+        }
+        toolsCache = null; pythonEnvironmentCache = null; currentRun = null; backupError = '';
+        return json(res, { ok: true, backupBeforeRestore: rollback.name });
+      }
+      if (route === 'POST /api/language/sync') return json(res, await languages.sync(await body(req)));
+      if (route === 'POST /api/language/query') {
+        const data = await body(req); const controller = new AbortController(); const disconnect = () => { if (!res.writableEnded) controller.abort(); }; res.on('close', disconnect);
+        try { return json(res, await languages.query(data, controller.signal)); } finally { res.off('close', disconnect); }
+      }
       if (route === 'GET /api/state') return json(res, { settings: publicConfig(), ...await projectState(), tree: await tree(), run: currentRun ? { id: currentRun.id, phase: currentRun.phase, path: currentRun.path, sourceFingerprint: currentRun.sourceFingerprint, output: currentRun.output, code: currentRun.code, stopped: currentRun.stopping } : null });
       if (route === 'GET /api/project') return json(res, await projectState());
       if (route === 'POST /api/project') {
@@ -461,6 +538,7 @@ server = http.createServer(async (req, res) => {
         try { await fs.writeFile(temp, `${JSON.stringify(data, null, 2)}\n`, { flag: 'wx' }); await fs.rename(temp, file); }
         finally { await fs.unlink(temp).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
         pythonEnvironmentCache = null;
+        languages.reset();
         return json(res, { ...await projectState(), tree: await tree() });
       }
       if (route === 'POST /api/project/venv') { await body(req); return json(res, await createEnvironment()); }
@@ -502,7 +580,7 @@ server = http.createServer(async (req, res) => {
         try {
         const data = await body(req); const root = await fs.realpath(data.path);
         if (!(await fs.stat(root)).isDirectory()) fail('请选择有效的文件夹。');
-        mentor.abortAll(); ROOT = root; config.workspace = root; await persist(); currentRun = null; pythonEnvironmentCache = null;
+        mentor.abortAll(); languages.reset(); for (const controller of aiJobs) controller.abort(); ROOT = root; config.workspace = root; await persist(); currentRun = null; pythonEnvironmentCache = null;
         return json(res, { settings: publicConfig(), ...await projectState(), tree: await tree() });
         } finally { workspacePending = false; }
       }
@@ -513,15 +591,31 @@ server = http.createServer(async (req, res) => {
         for (const field of ['provider', 'baseUrl', 'model']) if (typeof data[field] === 'string') next[field] = data[field].trim().slice(0, 1000);
         if (['chat', 'responses', 'anthropic'].includes(data.protocol)) next.protocol = data.protocol;
         if (typeof data.anonymous === 'boolean') next.anonymous = data.anonymous;
+        if (['zh-CN', 'en'].includes(data.locale)) next.locale = data.locale;
+        if (typeof data.streaming === 'boolean') next.streaming = data.streaming;
         if (data.timeout !== undefined) next.timeout = Math.max(10, Math.min(600, Number(data.timeout) || 120));
         if (data.tools) next.tools = Object.fromEntries(['python', 'c', 'cpp'].map(x => [x, String(data.tools[x] || '').trim()]));
         if (data.clearKey) next.encryptedKey = '';
         if (typeof data.key === 'string' && data.key.trim()) next.encryptedKey = await protectKey(data.key.trim());
         config = next; await persist(); toolsCache = null;
         pythonEnvironmentCache = null;
+        if (data.tools) languages.reset();
         return json(res, { settings: publicConfig(), ...await projectState() });
       }
-      if (route === 'POST /api/ai') return json(res, await aiRequest(await body(req)));
+      if (route === 'POST /api/ai' || route === 'POST /api/ai/stream') {
+        const data = await body(req); const controller = new AbortController(); aiJobs.add(controller);
+        const disconnect = () => { if (!res.writableEnded) controller.abort(); }; res.on('close', disconnect);
+        try {
+          if (route.endsWith('/stream')) {
+            res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive' }); res.flushHeaders();
+            const write = value => { if (!res.destroyed) res.write(`data: ${JSON.stringify(value)}\n\n`); };
+            try { const result = await aiRequest(data, { signal: controller.signal, onDelta: text => write({ type: 'delta', text }) }); write({ type: 'done', model: result.model, usage: result.usage, mode: result.mode }); }
+            catch (error) { if (!controller.signal.aborted) write({ type: 'error', error: cleanError(error) }); }
+            res.end(); return;
+          }
+          return json(res, await aiRequest(data, { signal: controller.signal }));
+        } finally { aiJobs.delete(controller); res.off('close', disconnect); }
+      }
       if (route === 'POST /api/run') {
         if (environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('已有程序或环境操作正在运行，请先停止或等待完成。', 409);
         runPending = true;

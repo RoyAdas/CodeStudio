@@ -4,7 +4,7 @@ import { isSensitiveMentorPath } from './mentor-shared.mjs';
 const bad = message => { const error = Error(message); error.status = 400; throw error; };
 export async function prepareChanges(input, { safePath, askAI, signal }) {
   if (typeof input.instruction !== 'string' || !input.instruction.trim()) bad('请描述希望修改的内容。');
-  if (!Array.isArray(input.files) || !input.files.length || input.files.length > 6) bad('请打开 1–6 个相关代码文件。');
+  if (!Array.isArray(input.files) || !input.files.length || input.files.length > 16) bad('请打开 1–16 个相关代码文件。');
   const files = []; let budget = 0;
   for (const file of input.files) {
     if (isSensitiveMentorPath(file.path)) bad('不能发送敏感文件。');

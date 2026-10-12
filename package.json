@@ -1,6 +1,6 @@
 {
   "name": "code-studio-local",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A local AI programming learning workbench for Windows",
   "license": "MIT",
   "author": "RoyAdas",
@@ -22,11 +22,16 @@
     "test:package": "node tests/package-smoke.mjs",
     "package:win": "node scripts/package-windows.mjs",
     "prepare:languages": "node scripts/prepare-languages.mjs",
-    "prepare:debugger": "node scripts/prepare-debugger.mjs"
+    "prepare:debugger": "node scripts/prepare-debugger.mjs",
+    "prepare:python": "node scripts/prepare-python.mjs"
   },
   "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "lucide-react": "1.31.0",
     "monaco-editor": "0.57.0",
+    "node-pty": "1.1.0",
+    "prettier": "3.9.10",
     "pyright": "1.1.414",
     "react": "19.2.6",
     "react-dom": "19.2.6"

@@ -28,7 +28,7 @@ Network, permission, quota, or response-format errors pause automatic reviews wh
 
 ## What is sent
 
-The mentor uses the current and other open code files: up to 6 files and about 36,000 characters, including unsaved edits. Context may also include the task, selected text, and actual execution output. Long files are truncated, so open smaller relevant files when necessary.
+The mentor uses the current and other open code files: up to 16 files and about 36,000 characters, including unsaved edits. Context may also include the task, selected text, and actual execution output. Long files are truncated, so open smaller relevant files when necessary.
 
 The mentor applies these default filename and directory exclusions, case-insensitively:
 

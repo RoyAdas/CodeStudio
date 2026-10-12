@@ -21,6 +21,7 @@ jobs:
       - name: Prepare bundled language services
         run: npm run prepare:languages
       - run: npm run prepare:debugger
+      - run: npm run prepare:python
       - name: Check types
         run: npm run typecheck
       - name: Build editor

@@ -19,7 +19,7 @@ export function normalizeMentorContext(input = {}) {
   const sources = Array.isArray(input.files) ? input.files : activePath ? [{ path: activePath, code: input.code || '' }] : [];
   const unique = new Map(); let budget = 36000;
   for (const file of [...sources].sort((a, b) => Number(b.path === activePath) - Number(a.path === activePath))) {
-    if (unique.size >= 6 || budget <= 0) break;
+    if (unique.size >= 16 || budget <= 0) break;
     const filePath = clean(file?.path, 400); if (!filePath || unique.has(filePath) || isSensitiveMentorPath(filePath)) continue;
     const original = typeof (file.code ?? file.content) === 'string' ? file.code ?? file.content : '';
     const code = clean(original, Math.min(18000, budget)); budget -= code.length;

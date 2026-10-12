@@ -4,13 +4,13 @@
 
 Write and run code on your own computer in a browser, with an AI mentor that guides you through your projects one step at a time.
 
-CodeStudio is a local programming workbench for Windows, built with Monaco Editor. It offers Python and C/C++ editing and execution, semantic completion, and AI features with configurable API endpoints. v0.4.0 adds Python breakpoint debugging, real test results for mentor acceptance, and reviewable AI code changes.
+CodeStudio is a local programming workbench for Windows, built with Monaco Editor. It offers Python and C/C++ editing and execution, semantic completion, and AI features with configurable API endpoints. v0.5.0 adds ten toolbox capabilities: Git, search/refactoring, local history, context selection, AI profiles, templates, pytest/coverage, interactive terminals, learning reviews, and updates/rollback.
 
 ![CodeStudio workbench with a file tree, editor, execution output, and task mentor](docs/images/workbench.png)
 
 ## Download and start
 
-1. Download [CodeStudio-v0.4.0-windows-x64.zip](https://github.com/RoyAdas/CodeStudio/releases/download/v0.4.0/CodeStudio-v0.4.0-windows-x64.zip), or visit the [latest Release](https://github.com/RoyAdas/CodeStudio/releases/latest). GitHub's “Source code” archives are for development, not the ready-to-run package.
+1. Download [CodeStudio-v0.5.0-windows-x64.zip](https://github.com/RoyAdas/CodeStudio/releases/download/v0.5.0/CodeStudio-v0.5.0-windows-x64.zip), or visit the [latest Release](https://github.com/RoyAdas/CodeStudio/releases/latest). GitHub's “Source code” archives are for development, not the ready-to-run package.
 2. **Extract the entire archive** into a writable folder. Do not run it inside the ZIP or copy only the launcher.
 3. Double-click `Start.cmd` or `启动工作台.cmd`. Your browser will open the local workbench.
 
@@ -18,7 +18,7 @@ The package includes Node, so you do not need npm or an editor download to start
 
 The default address is `http://127.0.0.1:8765`. If the port is occupied, the launcher selects another available port; use the address it opens. Double-click `Stop.cmd` or `停止工作台.cmd` to stop the service. Closing the browser leaves the background service running.
 
-v0.4.0 supports **Windows x64**. macOS, Linux, mobile devices, and public hosting are outside this release's supported scope.
+v0.5.0 supports **Windows x64**. macOS, Linux, mobile devices, and public hosting are outside this release's supported scope.
 
 ## Features and scope
 
@@ -34,9 +34,15 @@ v0.4.0 supports **Windows x64**. macOS, Linux, mobile devices, and public hostin
 
 Use **项目设置 / Project Settings** below the file tree to choose Python environments, build sources, header directories, and language standards. F5 saves all modified open files before running; empty C/C++ lists keep single-file execution. See [project environments and builds](docs/project.en.md).
 
-Python debugging and unittest are supported. Extension marketplaces, C/C++ debugging, CMake and external-library link options are not included. Defaults are C11/C++17; selectable alternatives require compiler support.
+Python debugging, unittest and pytest are supported. Extension marketplaces, C/C++ debugging, CMake and external-library link options are not included. Defaults are C11/C++17; selectable alternatives require compiler support.
 
 See the [v0.4 workflow guide](docs/workflow.en.md) for debugging, tests and AI changes. Local debugging and tests require no AI; generated suggestions use your configured provider.
+
+## v0.5 toolbox
+
+Open Toolbox in the top bar or editor toolbar for Git, search/refactoring, formatting, local history, context selection, AI profiles, templates, interactive terminals, learning reviews and version management. The test panel adds pytest and branch coverage. See the [English toolbox guide](docs/workspace.en.md) / [中文指南](docs/workspace.zh-CN.md).
+
+Formatting, pytest, coverage and debugging require Python 3.10+. Git features require Git for Windows; interactive terminals need Windows 10 1809+. Supporting components are bundled, but project-specific Python dependencies remain separate.
 
 ## Try your first exercise
 
@@ -59,7 +65,7 @@ Use the exact URL and model name supplied by your provider. Protocol adapters ha
 ## Privacy and execution permissions
 
 - Editor assets are served locally, and the server listens only on `127.0.0.1`. Editing, ordinary completion, and code execution do not call AI.
-- AI chat and completion send relevant context when requested. **After starting a mentor task, enabled automatic reviews send code snapshots.** The mentor may include up to 6 open files, about 36,000 characters, selected text, your task, and execution output. It excludes common sensitive filenames such as `.env`, but does not redact content; secrets in code or output may still be sent. Pause the mentor or remove such content first. See the [mentor guide](docs/mentor.en.md) for exact filename rules.
+- AI chat and completion send relevant context when requested. **After starting a mentor task, enabled automatic reviews send code snapshots.** The mentor may include up to 16 selected or open files, about 36,000 characters, selected text, your task, and execution output. It excludes common sensitive filenames such as `.env`, but does not redact content; secrets in code or output may still be sent. Pause the mentor or remove such content first. See the [mentor guide](docs/mentor.en.md) for exact filename rules.
 - Keys are encrypted locally with Windows DPAPI under your Windows account and stored in `data/`. Enter them again after switching computers or accounts. Configuration, task history, and logs are also local; do not commit `data/` to GitHub.
 - Programs execute with your current Windows account's permissions. **This is not an isolated code sandbox.** Run trusted code and do not expose the workbench to the public internet.
 - AI feedback is model judgment, not a substitute for actual tests. The mentor does not automatically install dependencies, execute arbitrary commands, or overwrite code.
@@ -72,6 +78,7 @@ Install a supported Node.js version (see `engines` in `package.json`) and npm, t
 npm ci
 npm run prepare:languages
 npm run prepare:debugger
+npm run prepare:python
 npm run build
 npm start
 ```

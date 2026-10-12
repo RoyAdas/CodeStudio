@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 
 export function createBackupStore({ dataDir, version, protect }) {
   const folder = path.join(dataDir, 'backups');
-  const names = ['settings.json', 'mentor-sessions.json'];
+  const names = ['settings.json', 'mentor-sessions.json', 'learning.json'];
   async function capture(reason = 'manual') {
     const files = {};
     for (const name of names) {

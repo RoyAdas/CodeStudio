@@ -14,6 +14,13 @@ import { createLanguageService } from './language-service.mjs';
 import { createDebugger } from './debugger.mjs';
 import { createTesting } from './testing.mjs';
 import { prepareChanges } from './ai-changes.mjs';
+import { createWorkspaceTools } from './workspace-tools.mjs';
+import { createGitTools } from './git-tools.mjs';
+import { createTerminalManager } from './terminal.mjs';
+import { createEditorTools } from './editor-tools.mjs';
+import { createLearning } from './learning.mjs';
+import { templates, createTemplate } from './templates.mjs';
+import { createUpdates } from './updates.mjs';
 
 const HOME = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(HOME, 'data');
@@ -49,7 +56,7 @@ if (process.argv.includes('--stop')) {
 }
 
 const defaults = { workspace: DEFAULT_WORKSPACE, provider: 'custom', protocol: 'chat', baseUrl: '', model: '', encryptedKey: '', tools: { python: '', c: '', cpp: '' }, timeout: 120, anonymous: false, locale: 'zh-CN', streaming: true };
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const aiJobs = new Set();
 let config;
 try { config = { ...defaults, ...JSON.parse(await fs.readFile(CONFIG_FILE, 'utf8')) }; }
@@ -69,7 +76,7 @@ async function persist() {
   await fs.writeFile(temp, JSON.stringify({ ...config, appVersion: VERSION }, null, 2), { mode: 0o600 });
   await fs.rename(temp, CONFIG_FILE);
 }
-function publicConfig() { const { encryptedKey, ...rest } = config; return { ...rest, workspace: ROOT, hasKey: !!encryptedKey }; }
+function publicConfig() { const { encryptedKey, profiles, ...rest } = config; return { ...rest, profiles: (profiles || []).map(({ encryptedKey, ...profile }) => ({ ...profile, hasKey: !!encryptedKey })), routes: config.routes || {}, workspace: ROOT, hasKey: !!encryptedKey }; }
 function json(res, data, status = 200) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(data));
@@ -382,7 +389,9 @@ function endpoint(base, protocol) {
   url.pathname = pathname; return url.toString();
 }
 async function aiRequest(data, overrides = {}) {
-  const apiConfig = { ...config };
+  const role = data.kind === 'complete' ? 'complete' : data.kind === 'mentor' ? 'mentor' : 'chat';
+  const profile = data.kind === 'test' ? null : (config.profiles || []).find(item => item.id === config.routes?.[role]);
+  const apiConfig = { ...config, ...(profile || {}) };
   if (!apiConfig.baseUrl || !apiConfig.model) fail('请先在 AI 设置中填写 API 地址和模型。');
   if (!apiConfig.encryptedKey && !apiConfig.anonymous) fail('请在 AI 设置中填写密钥。');
   const secret = apiConfig.encryptedKey ? await protectKey(apiConfig.encryptedKey, true) : '';
@@ -396,6 +405,10 @@ async function aiRequest(data, overrides = {}) {
     messages = [{ role: 'user', content: `Language: ${String(data.language).slice(0, 30)}\nFile: ${String(data.path).slice(0, 300)}\n<before_cursor>\n${String(data.prefix || '').slice(-12000)}\n</before_cursor>\n<after_cursor>\n${String(data.suffix || '').slice(0, 5000)}\n</after_cursor>` }];
   } else {
     system += `\n当前文件：${String(data.path || '').slice(0, 300)}\n语言：${String(data.language || '').slice(0, 30)}\n代码：\n${String(data.code || '').slice(0, 30000)}\n选中代码：\n${String(data.selection || '').slice(0, 8000)}\n实际终端输出：\n${String(data.output || '').slice(-10000)}`;
+    if (Array.isArray(data.contextFiles) && data.contextFiles.length) {
+      const context = await workspaceTools.context({ paths: data.contextFiles.map(file => file.path), drafts: data.contextFiles });
+      system += '\nUser-selected context: ' + JSON.stringify(context.files);
+    }
     if (data.taskContext && typeof data.taskContext === 'object') system += `\n学习者当前任务（保持一步一步提示）：${JSON.stringify(data.taskContext).slice(0, 6000)}`;
     if (!Array.isArray(data.messages) || !data.messages.length) fail('请先输入问题。');
     messages = data.messages.slice(-16).filter(m => ['user', 'assistant'].includes(m.role) && typeof m.content === 'string').map(m => ({ role: m.role, content: m.content.slice(0, 10000) }));
@@ -452,13 +465,14 @@ async function aiRequest(data, overrides = {}) {
   if (complete) content = content.replace(/^```[^\n]*\n/, '').replace(/\n```\s*$/, '');
   return { text: content, model: apiConfig.model, usage: result.usage || null };
 }
-const mentor = createMentorController({ dataDir: DATA, getWorkspace: () => ROOT, broadcast: emit, getLocale: () => config.locale, askAI: ({ system, messages, signal, maxTokens }) => aiRequest({ kind: 'mentor', messages }, { system, messages, signal, maxTokens }) });
+const learning = createLearning({ dataDir: DATA, getWorkspace: () => ROOT });
+const mentor = createMentorController({ dataDir: DATA, getWorkspace: () => ROOT, broadcast: (type, value) => { emit(type, value); if (type === 'mentor' && value.session) void learning.observe(value.workspace, value.session).catch(() => {}); }, getLocale: () => config.locale, askAI: ({ system, messages, signal, maxTokens }) => aiRequest({ kind: 'mentor', messages }, { system, messages, signal, maxTokens }) });
 const languages = createLanguageService({ home: HOME, dataDir: DATA, getWorkspace: () => ROOT, safePath, projectState, broadcast: emit });
 const executionOptions = { home: HOME, dataDir: DATA, getWorkspace: () => ROOT, safePath, projectState, broadcast: emit, killChild, timeout: () => Math.max(10, Math.min(600, Number(config.timeout) || 120)) };
 const debugging = createDebugger(executionOptions);
 const testing = createTesting(executionOptions);
 let executionPending = false;
-function extraBusy() { return executionPending || debugging.busy() || testing.busy(); }
+function extraBusy() { return executionPending || debugging.busy() || testing.busy() || gitTools.busy() || updates.busy(); }
 async function enrichMentor(data) {
   if (!data.context) return data;
   const tests = data.context.tests?.id ? await testing.evidence(data.context.tests.id) : null;
@@ -466,10 +480,16 @@ async function enrichMentor(data) {
   return { ...data, context: { ...data.context, tests, debug: data.context.debug?.id === debug.id ? debug : null } };
 }
 const backups = createBackupStore({ dataDir: DATA, version: VERSION, protect: protectKey });
+const workspaceTools = createWorkspaceTools({ dataDir: DATA, getWorkspace: () => ROOT, safePath, projectState });
+const gitTools = createGitTools({ getWorkspace: () => ROOT, safePath });
+const terminals = createTerminalManager({ getWorkspace: () => ROOT, broadcast: emit });
+const editorTools = createEditorTools({ home: HOME, getWorkspace: () => ROOT, workspace: workspaceTools, safePath, projectState, languages, capture });
+const updates = createUpdates({ home: HOME, version: VERSION, dataDir: DATA, backups });
 // Backup errors are visible in settings, while local editing can still start.
 let backupError = '';
 try { await backups.beforeUpgrade(); } catch (error) { backupError = cleanError(error); }
 async function shutdown() {
+  terminals.closeAll(); await learning.flush().catch(() => {});
   await debugging.stop(); await testing.stop();
   mentor.abortAll();
   languages.reset(); for (const controller of aiJobs) controller.abort();
@@ -493,6 +513,53 @@ server = http.createServer(async (req, res) => {
       const token = req.headers['x-studio-token'] || (url.pathname === '/api/events' ? url.searchParams.get('token') : '');
       if (token !== SESSION) fail('会话已更新，请刷新页面。', 403);
       const route = `${req.method} ${url.pathname}`;
+
+      if (route === 'GET /api/context/files') return json(res, { paths: await workspaceTools.list() });
+      if (route === 'POST /api/context') return json(res, await workspaceTools.context(await body(req)));
+      if (route === 'POST /api/search') return json(res, await workspaceTools.search(await body(req)));
+      if (route === 'GET /api/history') return json(res, { versions: await workspaceTools.history(url.searchParams.get('path')) });
+      if (route === 'POST /api/history/preview') { const data = await body(req); return json(res, await workspaceTools.historical(data.path, data.id)); }
+      if (route === 'POST /api/editor/preview') return json(res, await editorTools.preview(await body(req)));
+      if (route === 'GET /api/git') return json(res, await gitTools.state());
+      if (route === 'POST /api/git') return json(res, await gitTools.operation(await body(req)));
+      if (route === 'POST /api/git/diff') return json(res, await gitTools.diff(await body(req)));
+      if (route === 'GET /api/terminals') return json(res, { sessions: terminals.snapshot() });
+      if (route === 'POST /api/terminals/create') { await body(req); return json(res, await terminals.create()); }
+      if (route === 'POST /api/terminals/input') return json(res, terminals.input(await body(req)));
+      if (route === 'POST /api/terminals/resize') return json(res, terminals.resize(await body(req)));
+      if (route === 'POST /api/terminals/close') { const data = await body(req); return json(res, terminals.close(data.id)); }
+      if (route === 'GET /api/templates') return json(res, { templates: templates.map(({ files, ...item }) => item) });
+      if (route === 'POST /api/templates') return json(res, await createTemplate(await body(req), { safePath }));
+      if (route === 'GET /api/learning') { const current = await mentor.handle('state'); if (current.session) await learning.observe(ROOT, current.session); return json(res, await learning.state()); }
+      if (route === 'POST /api/learning/save') return json(res, await learning.save(await body(req)));
+      if (route === 'POST /api/learning/recap') {
+        const data = await body(req); const task = (await learning.state()).tasks.find(task => task.id === data.id); if (!task) fail('学习记录不存在。');
+        const result = await aiRequest({ kind: 'chat', messages: [{ role: 'user', content: 'Generate a short learning review from these actual records. Do not claim mastery or executed tests that are not recorded. Include next practice suggestions. ' + JSON.stringify(task).slice(0, 16000) }] });
+        return json(res, { text: result.text });
+      }
+      if (route === 'GET /api/profiles') return json(res, { profiles: publicConfig().profiles, routes: config.routes || {} });
+      if (route === 'POST /api/profiles') {
+        const data = await body(req); const profiles = [...(config.profiles || [])];
+        if (data.action === 'route') { if (!['chat', 'complete', 'mentor'].includes(data.role) || (data.id && !profiles.some(item => item.id === data.id))) fail('AI 路由无效。'); config.routes = { ...(config.routes || {}), [data.role]: data.id || '' }; }
+        else if (data.action === 'activate') { const profile = profiles.find(item => item.id === data.id); if (!profile) fail('AI 配置不存在。'); for (const field of ['provider', 'protocol', 'baseUrl', 'model', 'encryptedKey', 'anonymous', 'streaming']) config[field] = profile[field]; }
+        else if (data.action === 'delete') { config.profiles = profiles.filter(item => item.id !== data.id); config.routes = Object.fromEntries(Object.entries(config.routes || {}).filter(([, id]) => id !== data.id)); }
+        else {
+          if (!['chat', 'responses', 'anthropic'].includes(data.protocol) || !data.baseUrl || !data.model || !data.name || String(data.name).length > 80 || String(data.model).length > 200) fail('请填写配置名称、协议、地址和模型。');
+          endpoint(data.baseUrl, data.protocol); const old = profiles.find(item => item.id === data.id);
+          if (!old && profiles.length >= 16) fail('最多保存 16 套 AI 配置。');
+          const encryptedKey = data.key?.trim() ? await protectKey(data.key.trim()) : !data.clearKey && old?.baseUrl === data.baseUrl ? old.encryptedKey : '';
+          const profile = { id: old?.id || crypto.randomUUID(), name: data.name.trim(), provider: data.provider || 'custom', protocol: data.protocol, baseUrl: data.baseUrl.trim(), model: data.model.trim(), encryptedKey, anonymous: !!data.anonymous, streaming: data.streaming !== false };
+          config.profiles = [...profiles.filter(item => item.id !== profile.id), profile];
+          if (!config.baseUrl) for (const field of ['provider', 'protocol', 'baseUrl', 'model', 'encryptedKey', 'anonymous', 'streaming']) config[field] = profile[field];
+        }
+        await persist(); return json(res, { settings: publicConfig(), profiles: publicConfig().profiles, routes: config.routes || {} });
+      }
+      if (route === 'POST /api/updates/register') return json(res, await updates.register(await body(req)));
+      if (route === 'POST /api/updates/check') { await body(req); return json(res, await updates.check()); }
+      if (route === 'GET /api/updates') return json(res, { versions: await updates.list() });
+      if (route === 'POST /api/updates/download') { await body(req); if (extraBusy() || environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先停止运行或等待操作完成。'); return json(res, await updates.download()); }
+      if (route === 'POST /api/updates/launch') { const data = await body(req); if (extraBusy() || environmentJob || runPending || workspacePending || (currentRun && currentRun.phase !== 'finished')) fail('请先停止运行或等待操作完成。'); const result = await updates.launch(data.version, data.path); json(res, result); if (!result.current) setTimeout(() => void shutdown(), 1000); return; }
+
       if (route === 'GET /api/backups') return json(res, { backups: await backups.list(), error: backupError });
       if (route === 'POST /api/backups/export') { await body(req); await mentor.flush(); return json(res, await backups.capture('manual')); }
       if (route === 'POST /api/backups/import' || route === 'POST /api/backups/migrate') {
@@ -504,7 +571,7 @@ server = http.createServer(async (req, res) => {
           const oldHome = await fs.realpath(data.path); const oldData = await fs.realpath(path.join(oldHome, 'data'));
           const relativeData = path.relative(oldHome, oldData); if (relativeData !== 'data') fail('旧版本 data 目录不能链接到其他位置。');
           files = {};
-          for (const name of ['settings.json', 'mentor-sessions.json']) {
+          for (const name of ['settings.json', 'mentor-sessions.json', 'learning.json']) {
             try {
               const file = await fs.realpath(path.join(oldData, name)); if (path.dirname(file) !== oldData) fail('旧设置文件不能链接到其他位置。');
               const stat = await fs.stat(file); if (!stat.isFile() || stat.size > 6_000_000) fail('旧设置文件过大或无效。');
@@ -522,17 +589,22 @@ server = http.createServer(async (req, res) => {
         if (restored.encryptedKey) await protectKey(restored.encryptedKey, true);
         const sessions = files['mentor-sessions.json'] ? JSON.parse(files['mentor-sessions.json']) : { version: 1, sessions: {} };
         mentor.validateStored(sessions);
+        if (files['learning.json']) { const records = JSON.parse(files['learning.json']); if (records?.version !== 1 || !records.workspaces || typeof records.workspaces !== 'object' || Array.isArray(records.workspaces) || Object.values(records.workspaces).some(item => !item?.tasks || typeof item.tasks !== 'object' || Array.isArray(item.tasks) || Object.values(item.tasks).some(task => !task || typeof task.id !== 'string' || typeof task.title !== 'string' || !Array.isArray(task.mistakes) || !Number.isFinite(task.completedSteps) || !Number.isFinite(task.totalSteps) || !Number.isFinite(task.minutes)))) fail('备份中的学习记录格式不正确。'); }
         let restoredRoot; try { restoredRoot = await fs.realpath(restored.workspace); if (!(await fs.stat(restoredRoot)).isDirectory()) throw Error(); } catch { fail('备份中的工作区不存在，请先恢复原工作区文件夹。'); }
-        await mentor.flush(); const rollback = await backups.capture('before-restore');
+        await mentor.flush(); await learning.flush(); const rollback = await backups.capture('before-restore');
         const oldConfig = config; const oldRoot = ROOT;
         mentor.abortAll(); languages.reset(); for (const controller of aiJobs) controller.abort();
         try {
+          if (restored.profiles && (!Array.isArray(restored.profiles) || restored.profiles.length > 16)) fail('备份中的 AI 配置无效。');
+          for (const profile of restored.profiles || []) { endpoint(profile.baseUrl, profile.protocol); if (profile.encryptedKey) await protectKey(profile.encryptedKey, true); }
           config = { ...defaults, ...restored, locale: restored.locale === 'en' ? 'en' : 'zh-CN' }; ROOT = restoredRoot;
           await persist(); await mentor.replaceStored(sessions);
+          if (files['learning.json']) await fs.writeFile(path.join(DATA, 'learning.json'), files['learning.json'], { mode: 0o600 });
         } catch (error) {
           config = oldConfig; ROOT = oldRoot; await persist();
           const previous = await backups.decode(rollback.backup);
           await mentor.replaceStored(previous['mentor-sessions.json'] ? JSON.parse(previous['mentor-sessions.json']) : { version: 1, sessions: {} });
+          if (previous['learning.json']) await fs.writeFile(path.join(DATA, 'learning.json'), previous['learning.json'], { mode: 0o600 }); else await fs.unlink(path.join(DATA, 'learning.json')).catch(error => { if (error.code !== 'ENOENT') throw error; });
           throw error;
         }
         toolsCache = null; pythonEnvironmentCache = null; currentRun = null; testing.reset(); backupError = '';
@@ -593,6 +665,8 @@ server = http.createServer(async (req, res) => {
       if (route === 'POST /api/files') {
         const data = await body(req); const file = await safePath(data.path, true);
         if (typeof data.content !== 'string') fail('文件内容无效。');
+        try { await workspaceTools.record(data.path, await fs.readFile(file, 'utf8'), 'before-save'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        await workspaceTools.record(data.path, data.content, 'save');
         const temp = `${file}.studio-${crypto.randomBytes(5).toString('hex')}.tmp`;
         await fs.writeFile(temp, data.content, { flag: 'wx' }); await fs.rename(temp, file);
         return json(res, { ok: true });
@@ -615,7 +689,7 @@ server = http.createServer(async (req, res) => {
         try {
         const data = await body(req); const root = await fs.realpath(data.path);
         if (!(await fs.stat(root)).isDirectory()) fail('请选择有效的文件夹。');
-        mentor.abortAll(); languages.reset(); for (const controller of aiJobs) controller.abort(); testing.reset(); ROOT = root; config.workspace = root; await persist(); currentRun = null; pythonEnvironmentCache = null;
+        mentor.abortAll(); languages.reset(); for (const controller of aiJobs) controller.abort(); terminals.closeAll(); testing.reset(); ROOT = root; config.workspace = root; await persist(); currentRun = null; pythonEnvironmentCache = null;
         return json(res, { settings: publicConfig(), ...await projectState(), tree: await tree() });
         } finally { workspacePending = false; }
       }

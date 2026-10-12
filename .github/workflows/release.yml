@@ -24,6 +24,7 @@ jobs:
       - run: npm ci
       - run: npm run prepare:languages
       - run: npm run prepare:debugger
+      - run: npm run prepare:python
       - run: npm run typecheck
       - run: npm run build
       - run: npm test

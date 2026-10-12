@@ -1,0 +1,18 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+export const templates = [
+  { id: 'python-cli', name: 'Python 命令行工具', entry: 'main.py', task: '用 Python 编写一个命令行文本统计工具，分小步骤读取文本、统计词数，再编写边界测试。', files: { 'main.py': 'def word_count(text):\n    # TODO: count words\n    return 0\n\nif __name__ == "__main__":\n    print(word_count(input("Text: ")))\n', 'test_main.py': 'import unittest\nfrom main import word_count\n\nclass WordCount(unittest.TestCase):\n    def test_empty(self): self.assertEqual(word_count(""), 0)\n    def test_words(self): self.assertEqual(word_count("hello world"), 2)\n' } },
+  { id: 'python-expenses', name: 'Python 记账程序', entry: 'main.py', task: '用 Python 做一个记账程序，先实现金额合计，再验证空记录、多个金额，最后增加文件存储。', files: { 'main.py': 'def total_expenses(records):\n    # TODO: add the amounts\n    return 0\n\nif __name__ == "__main__":\n    print(total_expenses([12.5, 8]))\n', 'test_main.py': 'import unittest\nfrom main import total_expenses\n\nclass Expenses(unittest.TestCase):\n    def test_empty(self): self.assertEqual(total_expenses([]), 0)\n    def test_total(self): self.assertEqual(total_expenses([12.5, 8]), 20.5)\n' } },
+  { id: 'python-pytest', name: 'Python pytest 练习', entry: 'main.py', task: '实现列表求和函数，用参数化测试覆盖正数、负数和空列表，观察分支覆盖率。', files: { 'main.py': 'def total(values):\n    # TODO: sum the list\n    return 0\n', 'test_main.py': 'import pytest\nfrom main import total\n\n@pytest.mark.parametrize("values, expected", [([], 0), ([1, 2], 3), ([-1, 1], 0)])\ndef test_total(values, expected):\n    assert total(values) == expected\n' } },
+  { id: 'c-algorithms', name: 'C 算法练习', entry: 'main.c', task: '用 C 实现数组最大值，理解循环和边界处理，先编译最小程序，再验证输出。', files: { 'main.c': '#include <stdio.h>\n\nint maximum(const int *values, int length) {\n    /* TODO: inspect each item */\n    return 0;\n}\n\nint main(void) {\n    int values[] = {3, 7, 2};\n    printf("%d\\n", maximum(values, 3));\n    return 0;\n}\n' } },
+  { id: 'cpp-project', name: 'C++ 多文件项目', entry: 'main.cpp', task: '用 C++ 完成多文件统计工具，先理解头文件声明，再实现求和函数并构建。', files: { 'main.cpp': '#include <iostream>\n#include "stats.hpp"\n\nint main() { std::cout << total({1, 2, 3}) << std::endl; }\n', 'stats.hpp': '#pragma once\n#include <vector>\nint total(const std::vector<int>& values);\n', 'stats.cpp': '#include "stats.hpp"\n\nint total(const std::vector<int>& values) {\n    // TODO: accumulate values\n    return 0;\n}\n' } },
+];
+export async function createTemplate(input, { safePath }) {
+  const template = templates.find(item => item.id === input.template); if (!template) throw Error('项目模板不存在。');
+  if (typeof input.name !== 'string' || !/^[\p{L}\p{N}_-]{1,60}$/u.test(input.name) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(input.name)) throw Error('项目名称只能使用字母、数字、中文、下划线或连字符。');
+  const folder = await safePath(input.name, true); await fs.mkdir(folder);
+  const config = { version: 1, python: { mode: 'auto', venv: '.venv' }, build: { c: template.entry.endsWith('.c') ? ['main.c'] : [], cpp: template.id === 'cpp-project' ? ['main.cpp', 'stats.cpp'] : [], includeDirs: [], cStandard: 'c11', cppStandard: 'c++17' } };
+  const files = { ...template.files, '.codestudio.json': JSON.stringify(config, null, 2) + '\n', '.gitignore': '.venv/\n__pycache__/\n.pytest_cache/\n.coverage\n.code-studio-build/\n.env\n', 'README.md': `# ${input.name}\n\n${template.task}\n\nOpen ${template.entry}. Use Run or the test panel to verify each step.\n\n1. Read the current skeleton.\n2. Implement one small part.\n3. Run and test.\n4. Ask the mentor for a hint when needed.\n` };
+  for (const [name, content] of Object.entries(files)) await fs.writeFile(path.join(folder, name), content, { flag: 'wx' });
+  return { path: folder, entry: template.entry, task: template.task };
+}

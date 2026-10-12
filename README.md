@@ -4,13 +4,13 @@
 
 在浏览器里编写和运行本机代码，让 AI 导师按小步骤带你完成自己的项目。
 
-CodeStudio 是 Windows 本地编程学习工作台，使用 Monaco 编辑器，提供 Python、C/C++ 编辑运行、智能补全和可自定义接口的 AI 功能。v0.4.0 增加 Python 断点调试、真实测试与导师验收，以及可预览和撤销的 AI 修改。
+CodeStudio 是 Windows 本地编程学习工作台，使用 Monaco 编辑器，提供 Python、C/C++ 编辑运行、智能补全和可自定义接口的 AI 功能。v0.5.0 增加十项工作台功能：Git、搜索重构、本地历史、上下文选择、多套 AI、模板、pytest 覆盖率、交互终端、学习复盘、更新与回退。
 
 ![CodeStudio 工作台：文件树、代码编辑器、运行输出和实时导师](docs/images/workbench.png)
 
 ## 下载并启动
 
-1. 下载 [CodeStudio-v0.4.0-windows-x64.zip](https://github.com/RoyAdas/CodeStudio/releases/download/v0.4.0/CodeStudio-v0.4.0-windows-x64.zip)，或查看 [最新 Release](https://github.com/RoyAdas/CodeStudio/releases/latest)。GitHub 的 “Source code” 压缩包是开发源码，不是一键启动包。
+1. 下载 [CodeStudio-v0.5.0-windows-x64.zip](https://github.com/RoyAdas/CodeStudio/releases/download/v0.5.0/CodeStudio-v0.5.0-windows-x64.zip)，或查看 [最新 Release](https://github.com/RoyAdas/CodeStudio/releases/latest)。GitHub 的 “Source code” 压缩包是开发源码，不是一键启动包。
 2. **完整解压**到可写文件夹。不要直接在压缩包里运行，也不要只复制启动脚本。
 3. 双击 `Start.cmd` 或 `启动工作台.cmd`，浏览器会打开本机工作台。
 
@@ -18,7 +18,7 @@ CodeStudio 是 Windows 本地编程学习工作台，使用 Monaco 编辑器，�
 
 默认地址是 `http://127.0.0.1:8765`。端口被占用时启动器会选择其他可用端口，请以它打开的地址为准。双击 `Stop.cmd` 或 `停止工作台.cmd` 停止服务。关闭浏览器不会停止后台服务。
 
-当前支持 **Windows x64**。macOS、Linux、手机和公网部署不在 v0.4.0 的支持范围内。
+当前支持 **Windows x64**。macOS、Linux、手机和公网部署不在 v0.5.0 的支持范围内。
 
 ## 可以做什么
 
@@ -34,11 +34,17 @@ CodeStudio 是 Windows 本地编程学习工作台，使用 Monaco 编辑器，�
 
 在左侧“项目设置”选择 Python 环境、C/C++ 构建文件、头文件目录与语言标准。F5 会保存所有打开的修改，再按项目配置运行；C/C++ 列表留空则继续单文件运行。详见 [项目环境与构建](docs/project.zh-CN.md)。
 
-支持 Python 断点调试与 unittest 测试；暂不支持扩展市场、C/C++ 调试、CMake 和外部库链接配置。默认 C11/C++17，可选择编译器支持的其他标准。
+支持 Python 断点调试、unittest 与 pytest 测试；暂不支持扩展市场、C/C++ 调试、CMake 和外部库链接配置。默认 C11/C++17，可选择编译器支持的其他标准。
 
 流式回答、三档提示、备份迁移与界面语言切换详见 [v0.3 编辑器与升级指南](docs/editor.zh-CN.md)。
 
 调试、测试与 AI 修改详见 [v0.4 工作流指南](docs/workflow.zh-CN.md)。普通调试和测试无需 AI；生成或解释建议使用你配置的接口。
+
+## v0.5 工具箱
+
+顶栏或编辑器工具栏打开“工具箱”，使用 Git 管理、搜索替换与重命名、格式化、本地历史、上下文选择、多模型路由、离线模板、交互终端、学习复盘和版本管理。测试面板新增 pytest 与分支覆盖率。详见 [中文工具箱指南](docs/workspace.zh-CN.md) / [English guide](docs/workspace.en.md)。
+
+格式化、pytest、覆盖率和调试需要 Python 3.10+；Git 功能需要 Git for Windows；交互终端需要 Windows 10 1809+。相关组件随包提供，项目自己的 Python 依赖仍需安装。
 
 ## 第一次练习
 
@@ -61,7 +67,7 @@ CodeStudio 是 Windows 本地编程学习工作台，使用 Monaco 编辑器，�
 ## 隐私与运行权限
 
 - 编辑器资源由本机提供，服务只监听 `127.0.0.1`。编辑、普通补全和运行代码不会调用 AI。
-- 主动使用 AI 对话或补全会发送相关上下文；**开始导师任务后，开启的自动检查会持续发送代码快照**。导师最多使用 6 个打开文件、约 36,000 字符，也可能包含选中代码、任务及运行输出。导师默认排除 `.env` 等常见敏感文件名，但不进行内容脱敏；代码或输出中的密钥仍可能发送。遇到这类内容请暂停导师或先移除它，具体排除规则见 [导师说明](docs/mentor.zh-CN.md)。
+- 主动使用 AI 对话或补全会发送相关上下文；**开始导师任务后，开启的自动检查会持续发送代码快照**。导师最多使用 16 个选中或打开文件、约 36,000 字符，也可能包含选中代码、任务及运行输出。导师默认排除 `.env` 等常见敏感文件名，但不进行内容脱敏；代码或输出中的密钥仍可能发送。遇到这类内容请暂停导师或先移除它，具体排除规则见 [导师说明](docs/mentor.zh-CN.md)。
 - API 密钥通过 Windows DPAPI 使用当前账户加密保存在本机 `data/`，换账户或电脑后需重新填写。任务记录、配置和日志也在 `data/`，请勿上传到 GitHub。
 - 程序以当前 Windows 用户权限执行，**不是隔离的代码沙箱**。请只运行自己信任的代码，不要把工作台暴露到公网。
 - AI 反馈是模型判断，不代替实际测试。导师不会自动安装依赖、执行任意命令或覆盖你的代码。
@@ -74,6 +80,7 @@ CodeStudio 是 Windows 本地编程学习工作台，使用 Monaco 编辑器，�
 npm ci
 npm run prepare:languages
 npm run prepare:debugger
+npm run prepare:python
 npm run build
 npm start
 ```

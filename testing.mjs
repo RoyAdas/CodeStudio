@@ -43,8 +43,12 @@ export function createTesting({ home, dataDir, getWorkspace, safePath, projectSt
     try {
       const before = await sources(); const outputDir = path.join(dataDir, 'testing'); await fs.mkdir(outputDir, { recursive: true });
       const resultFile = path.join(outputDir, `${current.id}.json`);
-      state = { id: current.id, phase: 'running', directory, pattern, sources: before, cases: [], output: '', started: Date.now() }; publish();
-      const child = spawn(info.tools.python.path, [path.join(home, 'test-runner.py'), current.root, startDir, pattern, resultFile], { cwd: current.root, windowsHide: true, env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }, stdio: ['ignore', 'pipe', 'pipe'] }); current.child = child;
+      const framework = input.framework === 'pytest' ? 'pytest' : 'unittest';
+      const selected = input.failedOnly ? (state.cases || []).filter(item => ['failed', 'error', 'unexpectedSuccess'].includes(item.status)).map(item => item.id) : [];
+      if (input.failedOnly && !selected.length) bad('没有可重跑的失败用例。');
+      if (framework === 'pytest') for (const id of selected) { if (id.startsWith('-')) bad('测试编号无效。'); await safePath(id.split('::')[0]); }
+      state = { id: current.id, phase: 'running', framework, directory, pattern, sources: before, cases: [], output: '', started: Date.now() }; publish();
+      const child = spawn(info.tools.python.path, [path.join(home, 'test-runner.py'), current.root, startDir, pattern, resultFile, framework, input.coverage ? '1' : '0', JSON.stringify(selected)], { cwd: current.root, windowsHide: true, env: { ...process.env, PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1', PYTHONDONTWRITEBYTECODE: '1', PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }, stdio: ['ignore', 'pipe', 'pipe'] }); current.child = child;
       const limit = setTimeout(() => { current.stopping = true; state.error = '测试达到时间上限，已停止。'; void killChild(child); }, timeout() * 1000);
       const append = chunk => { state.output = (state.output + chunk.toString('utf8')).slice(-50000); publish(); };
       child.stdout.on('data', append); child.stderr.on('data', append);
@@ -52,7 +56,7 @@ export function createTesting({ home, dataDir, getWorkspace, safePath, projectSt
         if (job !== current) return;
         let report; try { const stat = await fs.stat(resultFile); if (stat.size > 2 * 1024 * 1024) throw Error('测试结果过大。'); report = JSON.parse(await fs.readFile(resultFile, 'utf8')); } catch (error) { state.error ||= current.stopping ? '测试已停止。' : '未收到完整测试结果。'; }
         const cases = Array.isArray(report?.cases) ? report.cases.slice(0, 1000).map(item => ({ id: String(item.id).slice(0, 300), status: ['passed', 'failed', 'error', 'skipped', 'expectedFailure', 'unexpectedSuccess'].includes(item.status) ? item.status : 'error', detail: String(item.detail || '').slice(-8000) })) : [];
-        state = { ...state, phase: 'finished', exitCode: code, cases, stopped: current.stopping, duration: Date.now() - state.started, passed: code === 0 && !current.stopping && !state.error && cases.some(item => item.status === 'passed') && !cases.some(item => ['failed', 'error', 'unexpectedSuccess'].includes(item.status)) };
+        state = { ...state, phase: 'finished', exitCode: code, cases, coverage: report?.coverage || null, stopped: current.stopping, duration: Date.now() - state.started, passed: code === 0 && !current.stopping && !state.error && cases.some(item => item.status === 'passed') && !cases.some(item => ['failed', 'error', 'unexpectedSuccess'].includes(item.status)) };
       }).catch(error => { state = { ...state, phase: 'finished', passed: false, error: error.message }; }).finally(async () => { clearTimeout(limit); if (job === current) { job = null; publish(); } await fs.unlink(resultFile).catch(() => {}); });
       return snapshot();
     } catch (error) { job = null; throw error; }

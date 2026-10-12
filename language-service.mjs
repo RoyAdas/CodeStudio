@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
-const allowedMethods = new Set(['textDocument/completion', 'textDocument/hover', 'textDocument/signatureHelp', 'textDocument/definition']);
+const allowedMethods = new Set(['textDocument/completion', 'textDocument/hover', 'textDocument/signatureHelp', 'textDocument/definition', 'textDocument/formatting', 'textDocument/rename']);
 const kindFor = name => /\.py$/i.test(name) ? 'python' : /\.(c|cpp|cc|cxx|h|hpp|hxx)$/i.test(name) ? 'cpp' : null;
 const uriOf = file => pathToFileURL(file).href;
 
@@ -146,7 +146,8 @@ export function createLanguageService({ home, dataDir, getWorkspace, safePath, p
     if (!input.position || !Number.isInteger(input.position.line) || !Number.isInteger(input.position.character) || input.position.line < 0 || input.position.character < 0) throw Error('代码位置无效。');
     const file = await safePath(input.path); const session = sessions.get(kindFor(input.path)); const doc = session?.documents.get(uriOf(file));
     if (!doc || doc.version !== input.version || session.root !== getWorkspace()) return { stale: true, result: null };
-    const result = await session.rpc.request(input.method, { textDocument: { uri: doc.uri }, position: input.position }, signal);
+    if (input.method === 'textDocument/rename' && (typeof input.newName !== 'string' || !/^[\p{L}_][\p{L}\p{N}_]*$/u.test(input.newName))) throw Error('重命名名称无效。');
+    const result = await session.rpc.request(input.method, { textDocument: { uri: doc.uri }, position: input.position, ...(input.method === 'textDocument/formatting' ? { options: { tabSize: 4, insertSpaces: true } } : {}), ...(input.method === 'textDocument/rename' ? { newName: input.newName } : {}) }, signal);
     if (session.documents.get(doc.uri)?.version !== input.version || session.root !== getWorkspace()) return { stale: true, result: null };
     if (input.method === 'textDocument/definition') {
       const locations = []; for (const item of Array.isArray(result) ? result : result ? [result] : []) {

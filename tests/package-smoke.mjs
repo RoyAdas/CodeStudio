@@ -146,12 +146,12 @@ try {
   assert.deepEqual(await fs.readdir(unpackRoot), ['CodeStudio']);
   const rootEntries = await fs.readdir(appRoot);
   assert.equal(rootEntries.includes('data'), false, 'Release must not ship local data.');
-  assert.deepEqual(await fs.readdir(path.join(appRoot, 'node_modules')), ['pyright']);
+  assert.deepEqual(await fs.readdir(path.join(appRoot, 'node_modules')), ['node-pty', 'prettier', 'pyright']);
   assert.equal(rootEntries.includes('.git'), false);
   const packagedFiles = await listFiles(appRoot);
   assert.equal(packagedFiles.filter(name => !name.startsWith('node_modules/pyright/dist/typeshed-fallback/')).some(name => /(^|\/)(data|backups|\.git)(\/|$)/i.test(name)), false, 'Release must exclude personal data, backups and development dependencies.');
   assert.equal(packagedFiles.some(name => /(^|\/)(settings\.json|running\.json|mentor-sessions\.json)$|\.log$/i.test(name)), false, 'Release must exclude settings and logs.');
-  for (const name of ['Start.cmd', 'Stop.cmd', '启动工作台.cmd', '停止工作台.cmd', 'launch.ps1', 'dist/index.html', 'README.md', 'README.en.md', 'LICENSE', 'licenses/Node-LICENSE.txt', 'node_modules/pyright/LICENSE.txt', 'language-runtime/clangd/bin/clangd.exe', 'language-service.mjs', 'debugger.mjs', 'testing.mjs', 'ai-changes.mjs', 'test-runner.py', 'debug-runtime/lib/debugpy/adapter/__main__.py', 'debug-runtime/lib/debugpy-1.8.22.dist-info/licenses/LICENSE']) assert.ok(packagedFiles.includes(name), `Required package file is missing: ${name}`);
+  for (const name of ['Start.cmd', 'Stop.cmd', '启动工作台.cmd', '停止工作台.cmd', 'launch.ps1', 'dist/index.html', 'README.md', 'README.en.md', 'LICENSE', 'licenses/Node-LICENSE.txt', 'node_modules/pyright/LICENSE.txt', 'language-runtime/clangd/bin/clangd.exe', 'language-service.mjs', 'debugger.mjs', 'testing.mjs', 'ai-changes.mjs', 'test-runner.py', 'debug-runtime/lib/debugpy/adapter/__main__.py', 'debug-runtime/lib/debugpy-1.8.22.dist-info/licenses/LICENSE', 'node_modules/node-pty/prebuilds/win32-x64/conpty.node', 'node_modules/node-pty/LICENSE', 'node_modules/prettier/LICENSE', 'python-runtime/lib/black/__init__.py', 'python-runtime/lib/pytest/__init__.py', 'python-runtime/lib/coverage/__init__.py', 'updates.mjs', 'workspace-tools.mjs']) assert.ok(packagedFiles.includes(name), `Required package file is missing: ${name}`);
   const exampleFiles = await listFiles(path.join(projectRoot, 'examples'));
   const workspaceFiles = await listFiles(path.join(appRoot, 'workspace'));
   assert.deepEqual(workspaceFiles, exampleFiles, 'Packaged workspace must contain only public examples.');
@@ -278,6 +278,24 @@ try {
     assert.equal(result.passed, true, JSON.stringify(result)); assert.equal(result.cases.length, 1);
     check('Packaged unittest reports a real passing case without development dependencies');
   }
+  const shell = await call('terminals/create', {});
+  await call('terminals/input', { id: shell.id, text: 'Write-Output ("PACKAGE" + "_PTY")\r' });
+  await eventually(async () => (await call('terminals')).sessions.some(item => item.output.includes('PACKAGE_PTY')));
+  await call('terminals/close', { id: shell.id });
+  check('Bundled Node loads the native ConPTY terminal and accepts real input offline');
+  if (state.tools.python.available) {
+    await call('new', { path: 'v05_math.py', type: 'file' }); await call('files', { path: 'v05_math.py', content: 'def total(values):\n return sum(values)\n' });
+    const formatted = await call('editor/preview', { action: 'format', path: 'v05_math.py' }); assert.match(formatted.changes[0].after, /    return/);
+    await call('new', { path: 'test_v05_math.py', type: 'file' }); await call('files', { path: 'test_v05_math.py', content: 'import pytest\nfrom v05_math import total\n@pytest.mark.parametrize("items", [[1, 2], [3]])\ndef test_total(items): assert total(items) == 3\n' });
+    await call('tests/start', { framework: 'pytest', coverage: true, pattern: 'test_v05_math.py' }); let tests;
+    await eventually(async () => { tests = await call('tests'); return tests.phase === 'finished'; }); assert.equal(tests.passed, true, JSON.stringify(tests)); assert.equal(tests.cases.length, 2); assert.ok(tests.coverage.files['v05_math.py']);
+    check('Packaged Black, pytest and branch coverage work in the project environment without pip installation');
+    assert.ok((await call('history?path=v05_math.py')).versions.length); assert.ok((await call('search', { query: 'def total' })).results.some(item => item.path === 'v05_math.py'));
+    check('Packaged project search and local code history work without network access');
+  }
+  const template = await call('templates', { template: 'cpp-project', name: 'packaged-practice' }); assert.ok(template.task);
+  assert.ok((await call('updates')).versions.some(item => item.version === packageJson.version && item.current));
+  check('Packaged offline templates and installed-version listing are available');
   await call('settings', { locale: 'en' }); const backup = await call('backups/export', {});
   assert.ok(backup.backup.encryptedData); assert.equal(backup.backup.settings, undefined);
   await call('settings', { locale: 'zh-CN' }); await call('backups/import', { backup: backup.backup });

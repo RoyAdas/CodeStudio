@@ -1,5 +1,21 @@
 # Changelog / 更新记录
 
+## 0.5.0 — 2026-10-12
+
+- Add Git status, diff, staging, local identity, commits/history, push/pull and AI assistance.
+- Add literal project search/replacement and previewed Python/C/C++ formatting and semantic rename.
+- Record per-file local save history with comparison and restore previews.
+- Select project AI context with separate scope previews and persistent workspace selection.
+- Add encrypted AI profiles and chat/completion/mentor routes.
+- Add five offline project templates and mentor goals.
+- Bundle pytest, branch coverage and Black; report parameterized cases and rerun failures.
+- Add native ConPTY PowerShell sessions with terminal tabs.
+- Record learning progress and mistakes; save AI review drafts only on confirmation.
+- Add manual official GitHub updates, SHA256 verification, independent installations and rollback.
+- Preserve Windows local launch, project environments, debugger and bilingual UI/docs.
+
+中文：十项功能加入工具箱与测试面板；安装、上下文范围、旧版本迁移与回退见 v0.5 指南。
+
 ## 0.4.0 — 2026-10-11
 
 - Bundle debugpy 1.8.22 for Python breakpoints, stepping, call stacks and variables using project environments.

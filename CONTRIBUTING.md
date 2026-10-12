@@ -9,6 +9,8 @@ Use Windows x64 and a Node.js version matching `package.json`'s `engines`. From 
 ```sh
 npm ci
 npm run prepare:languages
+npm run prepare:debugger
+npm run prepare:python
 npm run build
 npm start
 ```
@@ -29,7 +31,7 @@ Tests use local mocks; do not put real API credentials in test fixtures. Windows
 
 - Keep changes focused. Explain the user-visible problem, resulting behavior, and validation performed.
 - Preserve local-only serving, Windows key protection, workspace path checks, and explicit user approval before inserting AI suggestions or advancing a mentor step.
-- Update both README versions when user-facing setup or behavior changes. Interface translation is planned separately.
+- Update both README versions when user-facing setup or behavior changes, and maintain the Chinese/English interface translations.
 - Retain third-party license notices when adding or redistributing dependencies.
 
 请围绕具体问题提交改动，说明行为变化和验证结果。涉及用户使用方式时同步更新中英文文档；保持本机监听、工作区路径限制和明确的 AI 操作确认。
